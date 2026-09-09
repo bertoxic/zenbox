@@ -1,0 +1,323 @@
+import 'package:flutter/material.dart';
+
+class StudioPalette {
+  const StudioPalette({
+    required this.cream,
+    required this.sage,
+    required this.paleSage,
+    required this.gold,
+    required this.ink,
+    required this.muted,
+    required this.line,
+    required this.paper,
+  });
+
+  final Color cream, sage, paleSage, gold, ink, muted, line, paper;
+
+  factory StudioPalette.forPreset(StudioThemePreset preset) {
+    final dark = preset == StudioThemePreset.obsidian;
+    final primary = preset.primary;
+    final surface = preset.paper;
+    final foreground = preset.ink;
+    return StudioPalette(
+      cream: preset.background,
+      sage: primary,
+      paleSage: Color.lerp(primary, surface, dark ? .42 : .63)!,
+      gold: dark ? const Color(0xFFE2C675) : const Color(0xFFC7A866),
+      ink: foreground,
+      muted: Color.lerp(foreground, surface, dark ? .44 : .48)!,
+      line: Color.lerp(foreground, surface, dark ? .78 : .87)!,
+      paper: surface,
+    );
+  }
+}
+
+StudioPalette _activeStudioPalette = StudioPalette.forPreset(
+  StudioThemePreset.sage,
+);
+
+Color get cream => _activeStudioPalette.cream;
+Color get sage => _activeStudioPalette.sage;
+Color get paleSage => _activeStudioPalette.paleSage;
+Color get gold => _activeStudioPalette.gold;
+Color get ink => _activeStudioPalette.ink;
+Color get muted => _activeStudioPalette.muted;
+Color get line => _activeStudioPalette.line;
+Color get paper => _activeStudioPalette.paper;
+
+enum StudioThemePreset {
+  sage(
+    label: 'Wooden Forest',
+    description: 'Zenbox natural study palette',
+    primary: Color(0xFF42562E),
+    background: Color(0xFFF5F5EE),
+    ink: Color(0xFF1C321A),
+    paper: Color(0xFFFFFEF8),
+  ),
+  obsidian(
+    label: 'Obsidian Slate',
+    description: 'Dark focused writing retreat',
+    primary: Color(0xFF7A9BB8),
+    background: Color(0xFF181C22),
+    ink: Color(0xFFE2E7ED),
+    paper: Color(0xFF222832),
+  ),
+  sand(
+    label: 'Warm Sand',
+    description: 'Golden hour amber parchment',
+    primary: Color(0xFFB57A3D),
+    background: Color(0xFFFAF6EE),
+    ink: Color(0xFF382E25),
+    paper: Color(0xFFFFFDF8),
+  ),
+  cobalt(
+    label: 'Deep Cobalt',
+    description: 'Editorial clean cyan-indigo tone',
+    primary: Color(0xFF456C9C),
+    background: Color(0xFFF2F6FA),
+    ink: Color(0xFF1E2B38),
+    paper: Color(0xFFFAFCFF),
+  ),
+  rosewood(
+    label: 'Rosewood Velvet',
+    description: 'Elegant dramatic crimson-mauve',
+    primary: Color(0xFFA55A6B),
+    background: Color(0xFFFAF2F4),
+    ink: Color(0xFF382329),
+    paper: Color(0xFFFFF7F9),
+  );
+
+  const StudioThemePreset({
+    required this.label,
+    required this.description,
+    required this.primary,
+    required this.background,
+    required this.ink,
+    required this.paper,
+  });
+
+  final String label;
+  final String description;
+  final Color primary;
+  final Color background;
+  final Color ink;
+  final Color paper;
+}
+
+class StudioSettings {
+  final StudioThemePreset themePreset;
+  final String editorFont;
+  final double editorLineHeight;
+  final int autoSaveSeconds;
+  final String aiPersona;
+  final bool typewriterEffect;
+
+  const StudioSettings({
+    this.themePreset = StudioThemePreset.sage,
+    this.editorFont = 'Georgia',
+    this.editorLineHeight = 1.75,
+    this.autoSaveSeconds = 15,
+    this.aiPersona = 'Balanced Producer',
+    this.typewriterEffect = true,
+  });
+
+  StudioSettings copyWith({
+    StudioThemePreset? themePreset,
+    String? editorFont,
+    double? editorLineHeight,
+    int? autoSaveSeconds,
+    String? aiPersona,
+    bool? typewriterEffect,
+  }) {
+    return StudioSettings(
+      themePreset: themePreset ?? this.themePreset,
+      editorFont: editorFont ?? this.editorFont,
+      editorLineHeight: editorLineHeight ?? this.editorLineHeight,
+      autoSaveSeconds: autoSaveSeconds ?? this.autoSaveSeconds,
+      aiPersona: aiPersona ?? this.aiPersona,
+      typewriterEffect: typewriterEffect ?? this.typewriterEffect,
+    );
+  }
+}
+
+final studioSettingsNotifier = ValueNotifier<StudioSettings>(
+  const StudioSettings(),
+);
+
+ThemeData studioTheme([StudioSettings? settings]) {
+  final s = settings ?? studioSettingsNotifier.value;
+  _activeStudioPalette = StudioPalette.forPreset(s.themePreset);
+  final isDark = s.themePreset == StudioThemePreset.obsidian;
+  final bg = s.themePreset.background;
+  final textInk = s.themePreset.ink;
+  final prim = s.themePreset.primary;
+  final paperBg = s.themePreset.paper;
+  final borderColor = isDark ? const Color(0xFF2E3846) : line;
+
+  return ThemeData(
+    useMaterial3: true,
+    fontFamily: 'Segoe UI',
+    brightness: isDark ? Brightness.dark : Brightness.light,
+    scaffoldBackgroundColor: bg,
+    colorScheme: ColorScheme.fromSeed(
+      seedColor: prim,
+      brightness: isDark ? Brightness.dark : Brightness.light,
+      primary: prim,
+      secondary: gold,
+      surface: paperBg,
+      onSurface: textInk,
+    ),
+    textTheme: TextTheme(
+      bodyMedium: TextStyle(fontSize: 13, color: textInk),
+      bodySmall: TextStyle(
+        fontSize: 11,
+        color: isDark ? const Color(0xFF8E9BAA) : muted,
+      ),
+    ),
+    dividerColor: borderColor,
+    tooltipTheme: const TooltipThemeData(
+      waitDuration: Duration(milliseconds: 500),
+    ),
+    inputDecorationTheme: InputDecorationTheme(
+      isDense: true,
+      filled: true,
+      fillColor: paperBg,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: BorderSide(color: borderColor),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: BorderSide(color: borderColor),
+      ),
+      contentPadding: const EdgeInsets.all(13),
+    ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 17),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+      ),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(
+        side: BorderSide(color: borderColor),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+        padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 16),
+      ),
+    ),
+    iconButtonTheme: IconButtonThemeData(
+      style: IconButton.styleFrom(
+        foregroundColor: isDark ? const Color(0xFF8E9BAA) : muted,
+        iconSize: 19,
+      ),
+    ),
+  );
+}
+
+class Tag extends StatelessWidget {
+  const Tag(this.label, {super.key, this.color});
+  final String label;
+  final Color? color;
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+    decoration: BoxDecoration(
+      color: (color ?? paleSage).withValues(alpha: .35),
+      borderRadius: BorderRadius.circular(5),
+    ),
+    child: Text(
+      label,
+      style: TextStyle(fontSize: 10, color: ink, fontWeight: FontWeight.w600),
+    ),
+  );
+}
+
+class EmptyState extends StatelessWidget {
+  const EmptyState(
+    this.icon,
+    this.title,
+    this.subtitle, {
+    super.key,
+    this.action,
+  });
+  final IconData icon;
+  final String title, subtitle;
+  final Widget? action;
+  @override
+  Widget build(BuildContext context) => Center(
+    child: SingleChildScrollView(
+    child: Padding(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 40, color: sage),
+          const SizedBox(height: 18),
+          Text(
+            title,
+            style: const TextStyle(fontSize: 21, fontFamily: 'Georgia'),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            subtitle,
+            textAlign: TextAlign.center,
+            style: TextStyle(color: muted, height: 1.7),
+          ),
+          if (action != null) ...[const SizedBox(height: 22), action!],
+        ],
+      ),
+    ),
+    ),
+  );
+}
+
+class SectionHeading extends StatelessWidget {
+  const SectionHeading(
+    this.eyebrow,
+    this.title, {
+    super.key,
+    this.subtitle,
+    this.actions = const [],
+  });
+  final String eyebrow, title;
+  final String? subtitle;
+  final List<Widget> actions;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(30, 27, 30, 24),
+    child: Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                eyebrow.toUpperCase(),
+                style: TextStyle(
+                  color: muted,
+                  fontSize: 9,
+                  letterSpacing: 2,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 9),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontFamily: 'Georgia',
+                  fontSize: 29,
+                  letterSpacing: -.6,
+                ),
+              ),
+              if (subtitle != null) ...[
+                const SizedBox(height: 9),
+                Text(subtitle!, style: TextStyle(color: muted, fontSize: 12)),
+              ],
+            ],
+          ),
+        ),
+        ...actions,
+      ],
+    ),
+  );
+}
