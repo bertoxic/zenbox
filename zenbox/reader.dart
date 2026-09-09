@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:pdfrx/pdfrx.dart';
 import 'package:xml/xml.dart';
 import '../model.dart';
+import '../theme.dart';
 import '../visual.dart';
 import '../zenbox_model.dart';
 import '../zenbox_theme.dart';
@@ -113,11 +114,13 @@ class SourceReader extends StatefulWidget {
     required this.object,
     required this.onCapture,
     required this.onAsk,
+    this.showTitle = true,
   });
-  final ZenboxStore store;
+  final StudioStore store;
   final CreativeObject object;
   final void Function(String quote, String locator) onCapture;
   final void Function(String prompt) onAsk;
+  final bool showTitle;
   @override
   State<SourceReader> createState() => _SourceReaderState();
 }
@@ -141,6 +144,12 @@ class _SourceReaderState extends State<SourceReader> {
 
   void _repaint() {
     if (mounted) setState(() {});
+  }
+
+  void _fitCurrentPage() {
+    if (!pdf.isReady) return;
+    final matrix = pdf.calcMatrixForFit(pageNumber: page);
+    if (matrix != null) pdf.value = matrix;
   }
 
   Future<void> _load() async {
@@ -200,83 +209,168 @@ class _SourceReaderState extends State<SourceReader> {
     return Column(
       children: [
         Container(
-          color: surface,
-          padding: const EdgeInsets.all(10),
+          decoration: const BoxDecoration(
+            color: surface,
+            border: Border(bottom: BorderSide(color: edge)),
+          ),
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
           child: Column(
             children: [
-              Row(
-                children: [
-                  const Icon(Icons.menu_book_outlined, size: 18),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      widget.object.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
+              if (widget.showTitle)
+                Row(
+                  children: [
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: olive.withValues(alpha: .14),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(
+                        isPdf
+                            ? Icons.picture_as_pdf_outlined
+                            : Icons.menu_book_outlined,
+                        size: 17,
+                        color: moss,
+                      ),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        widget.object.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    if (isPdf)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 9,
+                          vertical: 5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: canvas,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: edge),
+                        ),
+                        child: Text(
+                          pages == 0 ? 'Loading PDF…' : '$pages pages',
+                          style: TextStyle(fontSize: 10, color: muted),
+                        ),
+                      ),
+                  ],
+                ),
+              if (widget.showTitle) const SizedBox(height: 10),
               Wrap(
-                spacing: 6,
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 10,
                 runSpacing: 6,
                 children: [
-                  OutlinedButton.icon(
-                    onPressed: selection.trim().isEmpty
-                        ? null
-                        : () => widget.onCapture(selection, locator),
-                    icon: const Icon(Icons.format_quote, size: 16),
-                    label: const Text('Capture evidence'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: selection.trim().isEmpty
-                        ? null
-                        : () => widget.onAsk(
-                            'Explain this passage from ${widget.object.title} ($locator). Distinguish what the source says from your interpretation.\n\n$selection',
+                  if (isPdf)
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton.filledTonal(
+                          tooltip: 'Previous page',
+                          visualDensity: VisualDensity.compact,
+                          onPressed: page > 1
+                              ? () => pdf.goToPage(pageNumber: page - 1)
+                              : null,
+                          icon: const Icon(Icons.chevron_left, size: 18),
+                        ),
+                        Container(
+                          constraints: const BoxConstraints(minWidth: 70),
+                          alignment: Alignment.center,
+                          child: Text(
+                            '$page / ${pages == 0 ? '—' : pages}',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
-                    icon: const Icon(Icons.auto_awesome, size: 16),
-                    label: const Text('Explain'),
+                        ),
+                        IconButton.filledTonal(
+                          tooltip: 'Next page',
+                          visualDensity: VisualDensity.compact,
+                          onPressed: page < pages
+                              ? () => pdf.goToPage(pageNumber: page + 1)
+                              : null,
+                          icon: const Icon(Icons.chevron_right, size: 18),
+                        ),
+                        IconButton(
+                          tooltip: 'Fit page',
+                          visualDensity: VisualDensity.compact,
+                          onPressed: pages == 0 ? null : _fitCurrentPage,
+                          icon: const Icon(Icons.fit_screen_outlined, size: 18),
+                        ),
+                      ],
+                    ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        onPressed: selection.trim().isEmpty
+                            ? null
+                            : () => widget.onCapture(selection, locator),
+                        icon: const Icon(Icons.bookmark_add_outlined, size: 15),
+                        label: const Text('Capture'),
+                      ),
+                      const SizedBox(width: 6),
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        onPressed: selection.trim().isEmpty
+                            ? null
+                            : () => widget.onAsk(
+                                'Explain this passage from ${widget.object.title} ($locator). Distinguish what the source says from your interpretation.\n\n$selection',
+                              ),
+                        icon: const Icon(Icons.auto_awesome, size: 15),
+                        label: const Text('Explain'),
+                      ),
+                    ],
                   ),
-                  if (isPdf) ...[
-                    IconButton(
-                      tooltip: 'Previous page',
-                      onPressed: page > 1
-                          ? () => pdf.goToPage(pageNumber: page - 1)
-                          : null,
-                      icon: const Icon(Icons.chevron_left),
-                    ),
-                    Text('$page / $pages'),
-                    IconButton(
-                      tooltip: 'Next page',
-                      onPressed: page < pages
-                          ? () => pdf.goToPage(pageNumber: page + 1)
-                          : null,
-                      icon: const Icon(Icons.chevron_right),
-                    ),
-                  ],
                 ],
               ),
-              if (isPdf)
-                TextField(
-                  decoration: const InputDecoration(
-                    hintText: 'Find in PDF…',
-                    prefixIcon: Icon(Icons.search),
-                    isDense: true,
+              if (isPdf) ...[
+                const SizedBox(height: 8),
+                SizedBox(
+                  height: 36,
+                  child: TextField(
+                    decoration: InputDecoration(
+                      hintText: 'Find text in this PDF…',
+                      hintStyle: TextStyle(fontSize: 11, color: muted),
+                      prefixIcon: const Icon(Icons.search, size: 17),
+                      suffixIcon: searcher?.matches.isNotEmpty == true
+                          ? TextButton(
+                              onPressed: () => searcher?.goToNextMatch(),
+                              child: Text(
+                                '${searcher!.matches.length} · Next',
+                                style: const TextStyle(fontSize: 10),
+                              ),
+                            )
+                          : null,
+                      isDense: true,
+                      filled: true,
+                      fillColor: canvas.withValues(alpha: .65),
+                      contentPadding: EdgeInsets.zero,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: edge),
+                      ),
+                    ),
+                    onSubmitted: (s) => searcher?.startTextSearch(s),
+                    onChanged: (s) {
+                      if (s.isEmpty) searcher?.startTextSearch('');
+                    },
                   ),
-                  onSubmitted: (s) {
-                    searcher?.startTextSearch(s);
-                  },
-                  onChanged: (s) {
-                    if (s.isEmpty) searcher?.startTextSearch('');
-                  },
                 ),
-              if (isPdf && searcher?.matches.isNotEmpty == true)
-                TextButton(
-                  onPressed: () => searcher?.goToNextMatch(),
-                  child: Text('${searcher!.matches.length} matches · Next'),
-                ),
+              ],
             ],
           ),
         ),
@@ -296,11 +390,17 @@ class _SourceReaderState extends State<SourceReader> {
                   initialPageNumber:
                       (widget.object.meta['readingPage'] as num?)?.toInt() ?? 1,
                   params: PdfViewerParams(
-                    backgroundColor: canvas,
-                    pagePaintCallbacks: [if(searcher!=null)searcher!.pageTextMatchPaintCallback],
+                    margin: 16,
+                    backgroundColor: const Color(0xFFE9EDE7),
+                    pageDropShadow: null,
+                    pagePaintCallbacks: [
+                      if (searcher != null)
+                        searcher!.pageTextMatchPaintCallback,
+                    ],
                     onViewerReady: (document, controller) {
                       searcher?.dispose();
-                      searcher = PdfTextSearcher(controller)..addListener(_repaint);
+                      searcher = PdfTextSearcher(controller)
+                        ..addListener(_repaint);
                       setState(() => pages = document.pages.length);
                       _indexPdf(document);
                     },

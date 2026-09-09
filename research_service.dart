@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as html;
 import 'package:http/http.dart' as http;
 
@@ -44,6 +45,21 @@ List<Map<String, dynamic>> parseResearchResults(String source, int limit) {
       'snippet': _clean(card.querySelector('.result__snippet')?.text ?? '')});
     if (results.length == limit) break;
   }
+  if (results.isEmpty) {
+    for (final anchor in document.querySelectorAll('a.result-link')) {
+      final href = Uri.tryParse(anchor.attributes['href'] ?? '');
+      final url = Uri.tryParse(href?.queryParameters['uddg'] ?? href?.toString() ?? '');
+      if (url == null || !publicResearchUrl(url) || !seen.add(url.toString())) continue;
+      final snippetTd = anchor.parent?.parent?.nextElementSibling?.querySelector('.result-snippet');
+      results.add({
+        'title': _clean(anchor.text),
+        'url': url.toString(),
+        'domain': url.host,
+        'snippet': _clean(snippetTd?.text ?? ''),
+      });
+      if (results.length == limit) break;
+    }
+  }
   return results;
 }
 
@@ -56,7 +72,7 @@ Map<String, dynamic> extractResearchPage(String source, Uri url, int offset, int
   for (final node in document.querySelectorAll('script,style,noscript,nav,footer,header,aside,form')) { node.remove(); }
   final root = document.querySelector('article') ?? document.querySelector('main') ?? document.body;
   // Add paragraph boundaries without duplicating nested text.
-  for (final node in root?.querySelectorAll('p,h1,h2,h3,h4,li,blockquote,br,tr') ?? []) { node.appendText('\n'); }
+  for (final node in root?.querySelectorAll('p,h1,h2,h3,h4,li,blockquote,br,tr') ?? []) { node.append(dom.Text('\n')); }
   final text = (root?.text ?? '').split('\n').map(_clean).where((line) => line.isNotEmpty).join('\n');
   final start = offset.clamp(0, text.length);
   final end = (start + maxChars).clamp(0, text.length);
@@ -92,7 +108,9 @@ class ResearchService {
         throw const FormatException('This address does not resolve to a public web server.');
       }
       final request = http.Request('GET', uri)..followRedirects = false;
-      request.headers['User-Agent'] = 'XandoraStudio/1.0 research assistant';
+      request.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+      request.headers['Accept'] = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8';
+      request.headers['Accept-Language'] = 'en-US,en;q=0.9';
       final response = await client.send(request).timeout(const Duration(seconds: 20));
       if (response.statusCode >= 300 && response.statusCode < 400) {
         final location = response.headers['location'];
@@ -136,8 +154,30 @@ class ResearchService {
         final key = jsonEncode({...args, 'input': value});
         if (_cache.containsKey(key)) return {..._cache[key]!, 'cached': true};
         try {
-          final uri = action == 'search' ? Uri.https('html.duckduckgo.com', '/html/', {'q': value}) : Uri.parse(value);
-          final (resolved, source, type) = await _read(uri);
+          late Uri resolved;
+          late String source;
+          late String type;
+          if (action == 'search') {
+            try {
+              final uri = Uri.https('html.duckduckgo.com', '/html/', {'q': value});
+              final res = await _read(uri);
+              resolved = res.$1;
+              source = res.$2;
+              type = res.$3;
+            } catch (_) {
+              final uri = Uri.https('lite.duckduckgo.com', '/lite/', {'q': value});
+              final res = await _read(uri);
+              resolved = res.$1;
+              source = res.$2;
+              type = res.$3;
+            }
+          } else {
+            final uri = Uri.parse(value);
+            final res = await _read(uri);
+            resolved = res.$1;
+            source = res.$2;
+            type = res.$3;
+          }
           late Map<String, dynamic> result;
           if (action == 'search') {
             final cards = parseResearchResults(source, ((args['maxResults'] as num?)?.toInt() ?? 5).clamp(1, 10));

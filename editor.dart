@@ -113,7 +113,7 @@ class _ObjectFormState extends State<ObjectForm> {
         TextFormField(
           initialValue: '${widget.object.meta['camera'] ?? ''}',
           decoration: const InputDecoration(
-            labelText: 'Framing & camera movement',
+            labelText: 'Teaching approach & visual cues',
           ),
           onChanged: (v) {
             widget.object.meta['camera'] = v;

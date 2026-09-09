@@ -20,7 +20,7 @@ Future<void> main() async {
         home: Scaffold(
           body: EmptyState(
             Icons.folder_off_outlined,
-            'Your studio could not be opened',
+            'Your study workspace could not be opened',
             'Your files have not been overwritten.\n$e',
           ),
         ),
@@ -36,7 +36,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) => ValueListenableBuilder<StudioSettings>(
     valueListenable: studioSettingsNotifier,
     builder: (context, settings, _) => MaterialApp(
-      title: 'Xandora — Creative Studio',
+      title: 'Zenbox — Study & Knowledge Workspace',
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,

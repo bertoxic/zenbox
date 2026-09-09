@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
@@ -6,6 +7,10 @@ import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'model.dart';
+import 'quiz_model.dart';
+import 'quiz_view.dart';
+import 'zenbox/reader.dart';
+import 'notification_service.dart';
 import 'theme.dart';
 
 class AssetThumbnail extends StatelessWidget {
@@ -24,9 +29,8 @@ class AssetThumbnail extends StatelessWidget {
       return Image.file(
         File(store.mediaPath(asset)),
         fit: fit,
-        errorBuilder: (_, _, _) => Center(
-          child: Icon(Icons.broken_image_outlined, color: muted),
-        ),
+        errorBuilder: (_, _, _) =>
+            Center(child: Icon(Icons.broken_image_outlined, color: muted)),
       );
     }
     return ColoredBox(
@@ -52,10 +56,12 @@ class MediaPreview extends StatefulWidget {
     required this.store,
     required this.asset,
     this.autoplay = false,
+    this.compactDocumentHeader = false,
   });
   final StudioStore store;
   final CreativeObject asset;
   final bool autoplay;
+  final bool compactDocumentHeader;
   @override
   State<MediaPreview> createState() => _MediaPreviewState();
 }
@@ -113,12 +119,130 @@ class _MediaPreviewState extends State<MediaPreview> {
         ),
       );
     }
+    final docExt =
+        widget.asset.meta['file']?.toString().split('.').last.toLowerCase() ??
+        '';
+    final isDoc =
+        [
+          'pdf',
+          'docx',
+          'doc',
+          'txt',
+          'md',
+          'csv',
+          'json',
+          'log',
+        ].contains(docExt) ||
+        widget.asset.meta['mediaType'] == 'document' ||
+        widget.asset.kind == 'source';
+    if (isDoc) {
+      return SourceReader(
+        store: widget.store,
+        object: widget.asset,
+        showTitle: !widget.compactDocumentHeader,
+        onCapture: (quote, locator) {
+          final note = CreativeObject(
+            kind: 'note',
+            title: 'Quote: ${widget.asset.title}',
+            body: '"$quote"\n— $locator',
+            links: [widget.asset.id],
+          );
+          widget.store.project.objects.add(note);
+          widget.store.changed();
+          TopNotification.show(
+            context,
+            'Saved quotation to Notes',
+            icon: Icons.bookmark_added_outlined,
+          );
+        },
+        onAsk: (prompt) {
+          Clipboard.setData(ClipboardData(text: prompt));
+          TopNotification.show(
+            context,
+            'Prompt copied for AI Companion',
+            icon: Icons.copy_all_outlined,
+          );
+        },
+      );
+    }
     return EmptyState(
       Icons.insert_drive_file_outlined,
       widget.asset.title,
       'This attachment is stored in your project. Use Export original to open it in another application.',
     );
   }
+}
+
+class ConceptCategory {
+  const ConceptCategory({
+    required this.id,
+    required this.name,
+    required this.accentColor,
+    required this.bgColor,
+    required this.icon,
+  });
+
+  final String id;
+  final String name;
+  final Color accentColor;
+  final Color bgColor;
+  final IconData icon;
+}
+
+const conceptCategories = [
+  ConceptCategory(
+    id: 'concept',
+    name: 'Concept',
+    accentColor: Color(0xFF4C7B5D),
+    bgColor: Color(0xFFF0F5F1),
+    icon: Icons.lightbulb_outline,
+  ),
+  ConceptCategory(
+    id: 'definition',
+    name: 'Definition',
+    accentColor: Color(0xFF2E6B80),
+    bgColor: Color(0xFFEBF3F6),
+    icon: Icons.menu_book_outlined,
+  ),
+  ConceptCategory(
+    id: 'formula',
+    name: 'Formula',
+    accentColor: Color(0xFFB5701B),
+    bgColor: Color(0xFFFBF4E8),
+    icon: Icons.functions_outlined,
+  ),
+  ConceptCategory(
+    id: 'question',
+    name: 'Question',
+    accentColor: Color(0xFFB54536),
+    bgColor: Color(0xFFFAECEB),
+    icon: Icons.help_outline,
+  ),
+  ConceptCategory(
+    id: 'summary',
+    name: 'Summary',
+    accentColor: Color(0xFF5B6E32),
+    bgColor: Color(0xFFF3F5EA),
+    icon: Icons.summarize_outlined,
+  ),
+  ConceptCategory(
+    id: 'takeaway',
+    name: 'Key Point',
+    accentColor: Color(0xFF55528A),
+    bgColor: Color(0xFFF0EFF8),
+    icon: Icons.stars_outlined,
+  ),
+];
+
+ConceptCategory getCategoryFor(CreativeObject o) {
+  final catId = o.meta['category'] as String?;
+  if (catId != null) {
+    for (final c in conceptCategories) {
+      if (c.id == catId) return c;
+    }
+  }
+  final colorIdx = (o.meta['color'] as int? ?? 0) % conceptCategories.length;
+  return conceptCategories[colorIdx];
 }
 
 class CanvasWorkspace extends StatefulWidget {
@@ -139,7 +263,11 @@ class CanvasWorkspace extends StatefulWidget {
 class _CanvasWorkspaceState extends State<CanvasWorkspace> {
   final transform = TransformationController();
   String? selected;
+  String? editing;
   bool connecting = false;
+  Offset? mouseScenePoint;
+  String searchQuery = '';
+
   @override
   void dispose() {
     transform.dispose();
@@ -147,40 +275,230 @@ class _CanvasWorkspaceState extends State<CanvasWorkspace> {
   }
 
   List<CreativeObject> get nodes => widget.store.project.of('board').toList();
-  void add([CreativeObject? source, Offset? point]) {
+
+  void add({CreativeObject? source, Offset? point, String? categoryId}) {
+    final defaultCat = categoryId ?? 'concept';
     final o = CreativeObject(
       kind: 'board',
-      title: source?.title ?? 'Untitled thought',
-      body: source?.body ?? 'Double-click to develop this idea.',
+      title: source?.title ?? 'New Concept',
+      body:
+          source?.body ??
+          'Double-click to expand this thought, add formulas, or connect to related ideas.',
       links: source == null ? [] : [source.id],
       meta: {
-        'x': point?.dx ?? 150.0 + nodes.length * 35,
-        'y': point?.dy ?? 150.0 + nodes.length * 35,
-        'color': nodes.length % 3,
+        'x': point?.dx ?? 150.0 + (nodes.length % 5) * 60,
+        'y': point?.dy ?? 150.0 + (nodes.length % 5) * 60,
+        'color': nodes.length % conceptCategories.length,
+        'category': defaultCat,
       },
     );
     widget.store.add(o);
-    selected = o.id;
+    setState(() {
+      selected = o.id;
+    });
+    widget.select(o);
+  }
+
+  void _startConnecting(String sourceId) {
+    setState(() {
+      selected = sourceId;
+      connecting = true;
+    });
+  }
+
+  void _completeConnecting(String targetId) {
+    if (selected != null && selected != targetId) {
+      final source = widget.store.project.object(selected);
+      if (source != null && !source.links.contains(targetId)) {
+        source.links.add(targetId);
+        widget.store.changed();
+      }
+    }
+    setState(() {
+      connecting = false;
+    });
+  }
+
+  void _removeConnection(CreativeObject source, String targetId) {
+    setState(() {
+      source.links.remove(targetId);
+      widget.store.changed();
+    });
+  }
+
+  void _cycleCategory(CreativeObject o) {
+    final currentCat = getCategoryFor(o);
+    final nextIdx =
+        (conceptCategories.indexWhere((c) => c.id == currentCat.id) + 1) %
+        conceptCategories.length;
+    setState(() {
+      o.meta['category'] = conceptCategories[nextIdx].id;
+      o.meta['color'] = nextIdx;
+      widget.store.changed();
+    });
+  }
+
+  void _setCategory(CreativeObject o, String categoryId) {
+    final idx = conceptCategories.indexWhere((c) => c.id == categoryId);
+    setState(() {
+      o.meta['category'] = categoryId;
+      if (idx != -1) o.meta['color'] = idx;
+      widget.store.changed();
+    });
+  }
+
+  void _autoArrange() {
+    final allNodes = nodes;
+    if (allNodes.isEmpty) return;
+
+    final inDegree = <String, int>{};
+    for (final n in allNodes) {
+      inDegree[n.id] = 0;
+    }
+    for (final n in allNodes) {
+      for (final link in n.links) {
+        if (inDegree.containsKey(link)) {
+          inDegree[link] = (inDegree[link] ?? 0) + 1;
+        }
+      }
+    }
+
+    final levels = <int, List<CreativeObject>>{};
+    final visited = <String>{};
+
+    var currentLevel = allNodes
+        .where((n) => (inDegree[n.id] ?? 0) == 0)
+        .toList();
+    if (currentLevel.isEmpty) currentLevel = [allNodes.first];
+
+    int levelIndex = 0;
+    while (currentLevel.isNotEmpty) {
+      levels[levelIndex] = [];
+      final nextLevel = <CreativeObject>[];
+      for (final n in currentLevel) {
+        if (visited.contains(n.id)) continue;
+        visited.add(n.id);
+        levels[levelIndex]!.add(n);
+        for (final targetId in n.links) {
+          final target = allNodes.firstWhere(
+            (item) => item.id == targetId,
+            orElse: () => n,
+          );
+          if (target != n &&
+              !visited.contains(target.id) &&
+              !nextLevel.contains(target)) {
+            nextLevel.add(target);
+          }
+        }
+      }
+      currentLevel = nextLevel;
+      levelIndex++;
+    }
+
+    final unvisited = allNodes.where((n) => !visited.contains(n.id)).toList();
+    if (unvisited.isNotEmpty) {
+      levels[levelIndex] = unvisited;
+    }
+
+    levels.forEach((col, colNodes) {
+      final startY = 160.0;
+      final gapY = 270.0;
+      final startX = 140.0 + col * 370.0;
+      for (int r = 0; r < colNodes.length; r++) {
+        final node = colNodes[r];
+        node.meta['x'] = startX.clamp(50.0, 2700.0);
+        node.meta['y'] = (startY + r * gapY).clamp(50.0, 1750.0);
+      }
+    });
+
+    widget.store.changed();
+    setState(() {});
+  }
+
+  void _fitView() {
+    if (nodes.isEmpty) {
+      transform.value = Matrix4.identity();
+      return;
+    }
+    double minX = 999999, minY = 999999, maxX = -999999, maxY = -999999;
+    for (final n in nodes) {
+      final x = (n.meta['x'] as num?)?.toDouble() ?? 100;
+      final y = (n.meta['y'] as num?)?.toDouble() ?? 100;
+      minX = math.min(minX, x);
+      minY = math.min(minY, y);
+      maxX = math.max(maxX, x + 280);
+      maxY = math.max(maxY, y + 200);
+    }
+    final contentW = maxX - minX + 240;
+    final contentH = maxY - minY + 240;
+    final scale = (900 / math.max(contentW, contentH * 1.3)).clamp(0.4, 1.2);
+    final tx = -minX * scale + 80;
+    final ty = -minY * scale + 60;
+    transform.value = Matrix4.identity()
+      ..translate(tx, ty)
+      ..scale(scale);
+    setState(() {});
+  }
+
+  void _zoom(double factor) {
+    final currentScale = transform.value.getMaxScaleOnAxis();
+    final newScale = (currentScale * factor).clamp(0.3, 2.5);
+    final scaleChange = newScale / currentScale;
+    transform.value = transform.value.scaled(scaleChange);
+    setState(() {});
   }
 
   @override
   Widget build(BuildContext context) => Column(
     children: [
       SectionHeading(
-        'Make room for ideas',
-        'The canvas',
+        'Visual concept workspace',
+        'Mind Map & Concept Board',
         subtitle:
-            'Drag cards to arrange · scroll to zoom · double-click to edit',
+            'Connect ideas across topics · Drag cards to arrange · Double-click canvas to add · Double-click card to edit',
         actions: [
+          SizedBox(
+            width: 140,
+            height: 30,
+            child: TextField(
+              style: const TextStyle(fontSize: 11),
+              decoration: InputDecoration(
+                hintText: 'Search board...',
+                hintStyle: TextStyle(fontSize: 10, color: muted),
+                prefixIcon: const Icon(Icons.search, size: 14),
+                contentPadding: EdgeInsets.zero,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                isDense: true,
+              ),
+              onChanged: (v) =>
+                  setState(() => searchQuery = v.trim().toLowerCase()),
+            ),
+          ),
+          const SizedBox(width: 8),
           IconButton(
-            tooltip: 'Reset view',
-            onPressed: () => transform.value = Matrix4.identity(),
-            icon: const Icon(Icons.fit_screen),
+            tooltip: 'Auto arrange into concept tree',
+            onPressed: _autoArrange,
+            icon: const Icon(Icons.auto_awesome_mosaic_outlined),
           ),
           IconButton(
-            tooltip: connecting
-                ? 'Cancel connection'
-                : 'Connect selected card to another card',
+            tooltip: 'Fit all concepts in view',
+            onPressed: _fitView,
+            icon: const Icon(Icons.fit_screen_outlined),
+          ),
+          IconButton(
+            tooltip: 'Zoom in',
+            onPressed: () => _zoom(1.2),
+            icon: const Icon(Icons.zoom_in, size: 19),
+          ),
+          IconButton(
+            tooltip: 'Zoom out',
+            onPressed: () => _zoom(0.83),
+            icon: const Icon(Icons.zoom_out, size: 19),
+          ),
+          IconButton(
+            tooltip: connecting ? 'Cancel linking' : 'Connect selected card',
             onPressed: selected == null
                 ? null
                 : () => setState(() => connecting = !connecting),
@@ -196,14 +514,45 @@ class _CanvasWorkspaceState extends State<CanvasWorkspace> {
                   },
             icon: const Icon(Icons.delete_outline, color: Color(0xFFA54141)),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 6),
           FilledButton.icon(
-            onPressed: add,
+            onPressed: () => add(),
             icon: const Icon(Icons.add, size: 16),
             label: const Text('Add card'),
           ),
         ],
       ),
+      if (connecting)
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          color: gold.withValues(alpha: 0.15),
+          child: Row(
+            children: [
+              Icon(Icons.hub, size: 16, color: gold),
+              const SizedBox(width: 8),
+              Text(
+                'Linking Mode Active: Click any target card to connect from selected card',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: ink,
+                ),
+              ),
+              const Spacer(),
+              TextButton(
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                ),
+                onPressed: () => setState(() => connecting = false),
+                child: const Text(
+                  'Cancel Linking',
+                  style: TextStyle(fontSize: 11),
+                ),
+              ),
+            ],
+          ),
+        ),
       Expanded(
         child: ClipRect(
           child: LayoutBuilder(
@@ -214,181 +563,72 @@ class _CanvasWorkspaceState extends State<CanvasWorkspace> {
                   box.globalToLocal(details.offset),
                 );
                 add(
-                  details.data,
-                  Offset(point.dx.clamp(0, 2700), point.dy.clamp(0, 1750)),
+                  source: details.data,
+                  point: Offset(
+                    point.dx.clamp(50, 2700),
+                    point.dy.clamp(50, 1750),
+                  ),
                 );
               },
               builder: (context, candidates, rejected) => Container(
                 color: candidates.isNotEmpty
                     ? paleSage.withValues(alpha: .5)
-                    : const Color(0xFFEFEFE5),
-                child: InteractiveViewer(
-                  transformationController: transform,
-                  constrained: false,
-                  boundaryMargin: const EdgeInsets.all(400),
-                  minScale: .3,
-                  maxScale: 2.5,
-                  child: SizedBox(
-                    width: 3000,
-                    height: 2000,
-                    child: Stack(
-                      children: [
-                        Positioned.fill(
-                          child: CustomPaint(painter: BoardPainter(nodes)),
+                    : const Color(0xFFF3F3EC),
+                child: MouseRegion(
+                  onHover: (event) {
+                    if (connecting) {
+                      setState(() {
+                        mouseScenePoint = transform.toScene(
+                          event.localPosition,
+                        );
+                      });
+                    }
+                  },
+                  child: GestureDetector(
+                    onDoubleTapDown: (details) {
+                      final box = context.findRenderObject() as RenderBox;
+                      final localPos = box.globalToLocal(
+                        details.globalPosition,
+                      );
+                      final scenePos = transform.toScene(localPos);
+                      add(
+                        point: Offset(
+                          scenePos.dx.clamp(50, 2700),
+                          scenePos.dy.clamp(50, 1750),
                         ),
-                        for (final o in nodes)
-                          Positioned(
-                            left: (o.meta['x'] as num?)?.toDouble() ?? 100,
-                            top: (o.meta['y'] as num?)?.toDouble() ?? 100,
-                            child: GestureDetector(
-                              onTap: () {
-                                if (connecting && selected != o.id) {
-                                  final source = widget.store.project.object(
-                                    selected,
-                                  );
-                                  if (source != null &&
-                                      !source.links.contains(o.id)) {
-                                    source.links.add(o.id);
-                                  }
-                                  connecting = false;
-                                  widget.store.changed();
-                                }
-                                setState(() => selected = o.id);
-                                widget.select(o);
-                              },
-                              onDoubleTap: () => widget.edit(o),
-                              onPanUpdate: (details) {
-                                o.meta['x'] =
-                                    (((o.meta['x'] as num?)?.toDouble() ??
-                                                100) +
-                                            details.delta.dx /
-                                                transform.value
-                                                    .getMaxScaleOnAxis())
-                                        .clamp(0, 2700);
-                                o.meta['y'] =
-                                    (((o.meta['y'] as num?)?.toDouble() ??
-                                                100) +
-                                            details.delta.dy /
-                                                transform.value
-                                                    .getMaxScaleOnAxis())
-                                        .clamp(0, 1750);
-                                widget.store.changed();
-                              },
-                              child: Container(
-                                width: 270,
-                                padding: const EdgeInsets.all(22),
-                                decoration: BoxDecoration(
-                                  color: [
-                                    paper,
-                                    const Color(0xFFD9E2D1),
-                                    const Color(0xFFEDE1C5),
-                                  ][(o.meta['color'] as int? ?? 0) % 3],
-                                  border: Border.all(
-                                    color: selected == o.id ? sage : line,
-                                    width: selected == o.id ? 2 : 1,
-                                  ),
-                                  borderRadius: BorderRadius.circular(5),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: ink.withValues(alpha: .07),
-                                      offset: const Offset(0, 5),
-                                      blurRadius: 16,
-                                    ),
-                                  ],
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Icon(
-                                          Icons.drag_indicator,
-                                          color: muted,
-                                          size: 15,
-                                        ),
-                                        const Spacer(),
-                                        IconButton(
-                                          tooltip: 'Delete card',
-                                          iconSize: 16,
-                                          padding: EdgeInsets.zero,
-                                          constraints: const BoxConstraints(
-                                            minWidth: 24,
-                                            minHeight: 24,
-                                          ),
-                                          color: const Color(0xFFA54141),
-                                          onPressed: () => widget.remove(o),
-                                          icon: const Icon(
-                                            Icons.delete_outline,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 6),
-                                        Text(
-                                          '${nodes.indexOf(o) + 1}'.padLeft(
-                                            2,
-                                            '0',
-                                          ),
-                                          style: TextStyle(
-                                            fontSize: 10,
-                                            color: muted,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 16),
-                                    for (final id in o.links)
-                                      if (widget.store.project
-                                                  .object(id)
-                                                  ?.kind ==
-                                              'asset' &&
-                                          widget.store.project
-                                                  .object(id)
-                                                  ?.meta['mediaType'] ==
-                                              'image') ...[
-                                        SizedBox(
-                                          height: 130,
-                                          width: double.infinity,
-                                          child: AssetThumbnail(
-                                            store: widget.store,
-                                            asset: widget.store.project.object(
-                                              id,
-                                            )!,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 12),
-                                      ],
-                                    Text(
-                                      o.title,
-                                      style: const TextStyle(
-                                        fontFamily: 'Georgia',
-                                        fontSize: 20,
-                                        height: 1.3,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 14),
-                                    Text(
-                                      o.body,
-                                      maxLines: 6,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        height: 1.7,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 18),
-                                    Text(
-                                      'IDEA / REFERENCE',
-                                      style: TextStyle(
-                                        fontSize: 8,
-                                        letterSpacing: 1.5,
-                                        color: muted,
-                                      ),
-                                    ),
-                                  ],
+                      );
+                    },
+                    onTap: () {
+                      if (connecting) {
+                        setState(() => connecting = false);
+                      }
+                    },
+                    child: InteractiveViewer(
+                      transformationController: transform,
+                      constrained: false,
+                      boundaryMargin: const EdgeInsets.all(500),
+                      minScale: .25,
+                      maxScale: 2.5,
+                      child: SizedBox(
+                        width: 3200,
+                        height: 2200,
+                        child: Stack(
+                          children: [
+                            Positioned.fill(
+                              child: CustomPaint(
+                                painter: BoardPainter(
+                                  nodes: nodes,
+                                  selectedId: selected,
+                                  connecting: connecting,
+                                  connectingSourceId: selected,
+                                  mousePoint: mouseScenePoint,
                                 ),
                               ),
                             ),
-                          ),
-                      ],
+                            for (final o in nodes) _buildNodeCard(o),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -399,44 +639,591 @@ class _CanvasWorkspaceState extends State<CanvasWorkspace> {
       ),
     ],
   );
+
+  Widget _buildNodeCard(CreativeObject o) {
+    final cat = getCategoryFor(o);
+    final isSelected = selected == o.id;
+    final isMatch =
+        searchQuery.isEmpty ||
+        o.title.toLowerCase().contains(searchQuery) ||
+        o.body.toLowerCase().contains(searchQuery);
+
+    final linkedObjects = o.links
+        .map((id) => widget.store.project.object(id))
+        .whereType<CreativeObject>()
+        .toList();
+
+    return Positioned(
+      left: (o.meta['x'] as num?)?.toDouble() ?? 100,
+      top: (o.meta['y'] as num?)?.toDouble() ?? 100,
+      child: Opacity(
+        opacity: isMatch ? 1.0 : 0.35,
+        child: GestureDetector(
+          onTap: () {
+            if (connecting && selected != null && selected != o.id) {
+              _completeConnecting(o.id);
+            } else {
+              setState(() => selected = o.id);
+              widget.select(o);
+            }
+          },
+          onDoubleTap: () {
+            setState(() {
+              selected = o.id;
+              editing = o.id;
+            });
+            widget.select(o);
+          },
+          onPanUpdate: editing == o.id
+              ? null
+              : (details) {
+                  final scale = transform.value.getMaxScaleOnAxis();
+                  setState(() {
+                    o.meta['x'] =
+                        (((o.meta['x'] as num?)?.toDouble() ?? 100) +
+                                details.delta.dx / scale)
+                            .clamp(50.0, 2900.0);
+                    o.meta['y'] =
+                        (((o.meta['y'] as num?)?.toDouble() ?? 100) +
+                                details.delta.dy / scale)
+                            .clamp(50.0, 1900.0);
+                  });
+                  widget.store.changed();
+                },
+          child: Container(
+            width: 280,
+            decoration: BoxDecoration(
+              color: cat.bgColor,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: isSelected
+                    ? (connecting ? gold : cat.accentColor)
+                    : line,
+                width: isSelected ? 2.5 : 1.2,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: isSelected
+                      ? cat.accentColor.withValues(alpha: 0.25)
+                      : Colors.black.withValues(alpha: 0.06),
+                  offset: const Offset(0, 4),
+                  blurRadius: isSelected ? 14 : 8,
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Card Header: Category Chip & Actions
+                Container(
+                  padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
+                  decoration: BoxDecoration(
+                    color: cat.accentColor.withValues(alpha: 0.08),
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(8),
+                    ),
+                    border: Border(
+                      bottom: BorderSide(color: line.withValues(alpha: 0.6)),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      PopupMenuButton<String>(
+                        tooltip: 'Change category',
+                        onSelected: (val) => _setCategory(o, val),
+                        itemBuilder: (context) => conceptCategories.map((c) {
+                          return PopupMenuItem<String>(
+                            value: c.id,
+                            child: Row(
+                              children: [
+                                Icon(c.icon, size: 15, color: c.accentColor),
+                                const SizedBox(width: 8),
+                                Text(
+                                  c.name,
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: cat.accentColor,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(cat.icon, size: 12, color: Colors.white),
+                              const SizedBox(width: 4),
+                              Text(
+                                cat.name.toUpperCase(),
+                                style: const TextStyle(
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.6,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              const SizedBox(width: 2),
+                              const Icon(
+                                Icons.arrow_drop_down,
+                                size: 12,
+                                color: Colors.white,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        tooltip: editing == o.id
+                            ? 'Finish editing'
+                            : 'Edit card text',
+                        iconSize: 15,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 22,
+                          minHeight: 22,
+                        ),
+                        color: editing == o.id ? cat.accentColor : muted,
+                        onPressed: () {
+                          setState(() {
+                            selected = o.id;
+                            editing = editing == o.id ? null : o.id;
+                          });
+                          widget.select(o);
+                        },
+                        icon: Icon(
+                          editing == o.id
+                              ? Icons.check_rounded
+                              : Icons.edit_outlined,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      IconButton(
+                        tooltip: 'Connect to another card',
+                        iconSize: 15,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 22,
+                          minHeight: 22,
+                        ),
+                        color: connecting && selected == o.id ? gold : muted,
+                        onPressed: () => _startConnecting(o.id),
+                        icon: const Icon(Icons.hub_outlined),
+                      ),
+                      const SizedBox(width: 4),
+                      IconButton(
+                        tooltip: 'Delete card',
+                        iconSize: 15,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 22,
+                          minHeight: 22,
+                        ),
+                        color: const Color(0xFFA54141),
+                        onPressed: () => widget.remove(o),
+                        icon: const Icon(Icons.delete_outline),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Card Body
+                Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Attached image thumbnails if linked
+                      for (final linked in linkedObjects)
+                        if (linked.kind == 'asset' &&
+                            linked.meta['mediaType'] == 'image') ...[
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(6),
+                            child: SizedBox(
+                              height: 120,
+                              width: double.infinity,
+                              child: AssetThumbnail(
+                                store: widget.store,
+                                asset: linked,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                        ],
+
+                      // Card text only becomes interactive after pressing edit.
+                      if (editing == o.id)
+                        TextFormField(
+                          key: ValueKey('${o.id}-title-editor'),
+                          initialValue: o.title,
+                          autofocus: true,
+                          style: TextStyle(
+                            fontFamily: 'Georgia',
+                            fontSize: 17,
+                            fontWeight: FontWeight.w700,
+                            height: 1.25,
+                            color: ink,
+                          ),
+                          decoration: const InputDecoration(
+                            hintText: 'Concept title…',
+                            isDense: true,
+                            contentPadding: EdgeInsets.symmetric(vertical: 4),
+                            border: UnderlineInputBorder(
+                              borderSide: BorderSide(color: Color(0xFF6E8B76)),
+                            ),
+                            focusedBorder: UnderlineInputBorder(
+                              borderSide: BorderSide(
+                                color: Color(0xFF6E8B76),
+                                width: 1.5,
+                              ),
+                            ),
+                          ),
+                          onChanged: (val) {
+                            o.title = val;
+                            widget.store.changed();
+                          },
+                        )
+                      else
+                        Text(
+                          o.title,
+                          style: TextStyle(
+                            fontFamily: 'Georgia',
+                            fontSize: 17,
+                            fontWeight: FontWeight.w700,
+                            height: 1.25,
+                            color: ink,
+                          ),
+                        ),
+                      const SizedBox(height: 6),
+
+                      if (editing == o.id)
+                        TextFormField(
+                          key: ValueKey('${o.id}-body-editor'),
+                          initialValue: o.body,
+                          maxLines: null,
+                          minLines: 2,
+                          style: TextStyle(
+                            fontSize: 12,
+                            height: 1.55,
+                            color: ink.withValues(alpha: 0.85),
+                          ),
+                          decoration: InputDecoration(
+                            hintText:
+                                'Write idea, formula, or concept details…',
+                            hintStyle: TextStyle(
+                              fontSize: 11,
+                              color: muted.withValues(alpha: 0.7),
+                            ),
+                            isDense: true,
+                            contentPadding: const EdgeInsets.symmetric(
+                              vertical: 4,
+                            ),
+                            border: const UnderlineInputBorder(
+                              borderSide: BorderSide(color: Color(0xFF6E8B76)),
+                            ),
+                            focusedBorder: const UnderlineInputBorder(
+                              borderSide: BorderSide(
+                                color: Color(0xFF6E8B76),
+                                width: 1.2,
+                              ),
+                            ),
+                          ),
+                          onChanged: (val) {
+                            o.body = val;
+                            widget.store.changed();
+                          },
+                        )
+                      else
+                        Text(
+                          o.body.isEmpty
+                              ? 'No details yet — choose edit to add some.'
+                              : o.body,
+                          maxLines: 5,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            height: 1.55,
+                            color: o.body.isEmpty
+                                ? muted.withValues(alpha: .7)
+                                : ink.withValues(alpha: 0.85),
+                            fontStyle: o.body.isEmpty ? FontStyle.italic : null,
+                          ),
+                        ),
+                      const SizedBox(height: 10),
+
+                      // Footer with link connections pill
+                      Row(
+                        children: [
+                          if (o.links.isNotEmpty)
+                            PopupMenuButton<String>(
+                              tooltip: 'Manage connections',
+                              onSelected: (targetId) =>
+                                  _removeConnection(o, targetId),
+                              itemBuilder: (context) => o.links.map((id) {
+                                final target = widget.store.project.object(id);
+                                final title = target?.title ?? 'Unknown';
+                                return PopupMenuItem<String>(
+                                  value: id,
+                                  child: Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.link_off,
+                                        size: 14,
+                                        color: Color(0xFFA54141),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          'Unlink: $title',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(fontSize: 11),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }).toList(),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: paper,
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(color: line),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.hub,
+                                      size: 11,
+                                      color: cat.accentColor,
+                                    ),
+                                    const SizedBox(width: 3),
+                                    Text(
+                                      '${o.links.length} ${o.links.length == 1 ? 'link' : 'links'}',
+                                      style: TextStyle(
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.w600,
+                                        color: ink,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                          else
+                            Text(
+                              'No connections',
+                              style: TextStyle(
+                                fontSize: 9,
+                                color: muted.withValues(alpha: 0.6),
+                              ),
+                            ),
+                          const Spacer(),
+                          Text(
+                            '#${nodes.indexOf(o) + 1}',
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                              color: muted,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class BoardPainter extends CustomPainter {
-  BoardPainter(this.nodes);
+  BoardPainter({
+    required this.nodes,
+    this.selectedId,
+    this.connecting = false,
+    this.connectingSourceId,
+    this.mousePoint,
+  });
+
   final List<CreativeObject> nodes;
+  final String? selectedId;
+  final bool connecting;
+  final String? connectingSourceId;
+  final Offset? mousePoint;
+
+  static const double cardWidth = 280.0;
+  static const double cardHeight = 180.0;
+
   @override
   void paint(Canvas canvas, Size size) {
-    final dots = Paint()..color = sage.withValues(alpha: .25);
-    for (double x = 0; x < size.width; x += 24) {
-      for (double y = 0; y < size.height; y += 24) {
-        canvas.drawCircle(Offset(x, y), 1, dots);
+    // 1. Subtle dotted background grid
+    final dotPaint = Paint()
+      ..color = const Color(0xFF5B6E32).withValues(alpha: 0.2);
+    for (double x = 0; x < size.width; x += 28) {
+      for (double y = 0; y < size.height; y += 28) {
+        canvas.drawCircle(Offset(x, y), 1.0, dotPaint);
       }
     }
-    final pen = Paint()
-      ..color = sage
-      ..strokeWidth = 2
-      ..style = PaintingStyle.stroke;
+
+    // 2. Connections with cubic Beziers and directional arrows
     for (final o in nodes) {
-      for (final id in o.links) {
-        final targets = nodes.where((n) => n.id == id);
+      final ox = (o.meta['x'] as num?)?.toDouble() ?? 100.0;
+      final oy = (o.meta['y'] as num?)?.toDouble() ?? 100.0;
+      final oCat = getCategoryFor(o);
+
+      for (final linkId in o.links) {
+        final targets = nodes.where((n) => n.id == linkId);
         if (targets.isEmpty) continue;
         final target = targets.first;
-        final a = Offset(
-          (o.meta['x'] as num).toDouble() + 270,
-          (o.meta['y'] as num).toDouble() + 100,
-        );
-        final b = Offset(
-          (target.meta['x'] as num).toDouble(),
-          (target.meta['y'] as num).toDouble() + 100,
-        );
-        canvas.drawPath(
-          Path()
-            ..moveTo(a.dx, a.dy)
-            ..cubicTo(a.dx + 80, a.dy, b.dx - 80, b.dy, b.dx, b.dy),
-          pen,
+        final tx = (target.meta['x'] as num?)?.toDouble() ?? 100.0;
+        final ty = (target.meta['y'] as num?)?.toDouble() ?? 100.0;
+
+        final isHighlighted = selectedId == o.id || selectedId == target.id;
+        _drawSmartConnection(
+          canvas,
+          startRect: Rect.fromLTWH(ox, oy, cardWidth, cardHeight),
+          endRect: Rect.fromLTWH(tx, ty, cardWidth, cardHeight),
+          color: isHighlighted
+              ? const Color(0xFFC07D2B)
+              : oCat.accentColor.withValues(alpha: 0.85),
+          isHighlighted: isHighlighted,
         );
       }
     }
+
+    // 3. Live connecting line to mouse pointer
+    if (connecting && connectingSourceId != null && mousePoint != null) {
+      final source = nodes.where((n) => n.id == connectingSourceId).firstOrNull;
+      if (source != null) {
+        final sx = (source.meta['x'] as num?)?.toDouble() ?? 100.0;
+        final sy = (source.meta['y'] as num?)?.toDouble() ?? 100.0;
+        final sCenter = Offset(sx + cardWidth / 2, sy + cardHeight / 2);
+
+        final previewPaint = Paint()
+          ..color = const Color(0xFFC07D2B)
+          ..strokeWidth = 2.4
+          ..style = PaintingStyle.stroke;
+
+        final cp = Offset(
+          (sCenter.dx + mousePoint!.dx) / 2,
+          (sCenter.dy + mousePoint!.dy) / 2 - 25,
+        );
+        final path = Path()
+          ..moveTo(sCenter.dx, sCenter.dy)
+          ..quadraticBezierTo(cp.dx, cp.dy, mousePoint!.dx, mousePoint!.dy);
+
+        canvas.drawPath(path, previewPaint);
+        canvas.drawCircle(
+          mousePoint!,
+          5,
+          Paint()..color = const Color(0xFFC07D2B),
+        );
+      }
+    }
+  }
+
+  void _drawSmartConnection(
+    Canvas canvas, {
+    required Rect startRect,
+    required Rect endRect,
+    required Color color,
+    required bool isHighlighted,
+  }) {
+    final startCenter = startRect.center;
+    final endCenter = endRect.center;
+    final dx = endCenter.dx - startCenter.dx;
+    final dy = endCenter.dy - startCenter.dy;
+
+    Offset anchorA, anchorB;
+    Offset cpA, cpB;
+
+    if (dx.abs() >= dy.abs()) {
+      if (dx >= 0) {
+        anchorA = Offset(startRect.right, startRect.center.dy);
+        anchorB = Offset(endRect.left, endRect.center.dy);
+        final dist = (anchorB.dx - anchorA.dx).abs() * 0.45 + 35;
+        cpA = Offset(anchorA.dx + dist, anchorA.dy);
+        cpB = Offset(anchorB.dx - dist, anchorB.dy);
+      } else {
+        anchorA = Offset(startRect.left, startRect.center.dy);
+        anchorB = Offset(endRect.right, endRect.center.dy);
+        final dist = (anchorA.dx - anchorB.dx).abs() * 0.45 + 35;
+        cpA = Offset(anchorA.dx - dist, anchorA.dy);
+        cpB = Offset(anchorB.dx + dist, anchorB.dy);
+      }
+    } else {
+      if (dy >= 0) {
+        anchorA = Offset(startRect.center.dx, startRect.bottom);
+        anchorB = Offset(endRect.center.dx, endRect.top);
+        final dist = (anchorB.dy - anchorA.dy).abs() * 0.45 + 35;
+        cpA = Offset(anchorA.dx, anchorA.dy + dist);
+        cpB = Offset(anchorB.dx, anchorB.dy - dist);
+      } else {
+        anchorA = Offset(startRect.center.dx, startRect.top);
+        anchorB = Offset(endRect.center.dx, endRect.bottom);
+        final dist = (anchorA.dy - anchorB.dy).abs() * 0.45 + 35;
+        cpA = Offset(anchorA.dx, anchorA.dy - dist);
+        cpB = Offset(anchorB.dx, anchorB.dy + dist);
+      }
+    }
+
+    final path = Path()
+      ..moveTo(anchorA.dx, anchorA.dy)
+      ..cubicTo(cpA.dx, cpA.dy, cpB.dx, cpB.dy, anchorB.dx, anchorB.dy);
+
+    if (isHighlighted) {
+      final glowPaint = Paint()
+        ..color = color.withValues(alpha: 0.3)
+        ..strokeWidth = 6.0
+        ..style = PaintingStyle.stroke;
+      canvas.drawPath(path, glowPaint);
+    }
+
+    final linePaint = Paint()
+      ..color = color
+      ..strokeWidth = isHighlighted ? 2.8 : 2.0
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    canvas.drawPath(path, linePaint);
+
+    final dotPaint = Paint()..color = color;
+    canvas.drawCircle(anchorA, isHighlighted ? 4.5 : 3.5, dotPaint);
+
+    final angle = math.atan2(anchorB.dy - cpB.dy, anchorB.dx - cpB.dx);
+    const arrowSize = 10.0;
+    final p1 = anchorB;
+    final p2 = Offset(
+      anchorB.dx - arrowSize * math.cos(angle - math.pi / 7),
+      anchorB.dy - arrowSize * math.sin(angle - math.pi / 7),
+    );
+    final p3 = Offset(
+      anchorB.dx - arrowSize * math.cos(angle + math.pi / 7),
+      anchorB.dy - arrowSize * math.sin(angle + math.pi / 7),
+    );
+    final arrowPath = Path()
+      ..moveTo(p1.dx, p1.dy)
+      ..lineTo(p2.dx, p2.dy)
+      ..lineTo(p3.dx, p3.dy)
+      ..close();
+    canvas.drawPath(arrowPath, dotPaint);
   }
 
   @override
@@ -491,7 +1278,34 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
       widget.asset.kind == 'asset' && widget.asset.meta['mediaType'] == 'audio';
   bool get isImage =>
       widget.asset.kind == 'asset' && widget.asset.meta['mediaType'] == 'image';
-  bool get isNote => !isVideo && !isAudio && !isImage;
+  bool get isDocument {
+    final ext =
+        widget.asset.meta['file']?.toString().split('.').last.toLowerCase() ??
+        '';
+    return [
+          'pdf',
+          'docx',
+          'doc',
+          'txt',
+          'md',
+          'csv',
+          'json',
+          'log',
+        ].contains(ext) ||
+        widget.asset.meta['mediaType'] == 'document' ||
+        widget.asset.kind == 'source';
+  }
+
+  bool get isQuiz => widget.asset.kind == 'quiz';
+  bool get isFlashcard => widget.asset.kind == 'card';
+  bool get isNote =>
+      !isVideo &&
+      !isAudio &&
+      !isImage &&
+      !isDocument &&
+      !isQuiz &&
+      !isFlashcard;
+  bool get isLightSurface => isNote || isQuiz || isFlashcard;
 
   @override
   void initState() {
@@ -500,7 +1314,16 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
     posY = widget.initialPosition?.dy ?? 100;
     noteController = TextEditingController(text: widget.asset.body);
 
-    if (isNote) {
+    if (isQuiz) {
+      width = 460;
+      height = 420;
+    } else if (isFlashcard) {
+      width = 380;
+      height = 280;
+    } else if (isDocument) {
+      width = 520;
+      height = 640;
+    } else if (isNote) {
       width = 380;
       height = 320;
     } else if (isImage) {
@@ -559,12 +1382,18 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
       math.max(0.0, screenSize.height - (minimized ? 46.0 : height)),
     );
 
-    final headerIcon = isVideo
+    final headerIcon = isQuiz
+        ? Icons.quiz_outlined
+        : isFlashcard
+        ? Icons.flip_to_back_outlined
+        : isVideo
         ? Icons.movie_outlined
         : isAudio
         ? Icons.audiotrack_outlined
         : isImage
         ? Icons.image_outlined
+        : isDocument
+        ? Icons.menu_book_outlined
         : Icons.sticky_note_2_outlined;
 
     return Positioned(
@@ -574,7 +1403,7 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
         elevation: 16,
         shadowColor: ink.withValues(alpha: .35),
         borderRadius: BorderRadius.circular(10),
-        color: isNote ? paper : ink,
+        color: isLightSurface ? paper : ink,
         child: SizedBox(
           width: width,
           height: minimized ? 46 : height,
@@ -584,7 +1413,7 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                 width: width,
                 height: minimized ? 46 : height,
                 decoration: BoxDecoration(
-                  color: isNote ? paper : ink,
+                  color: isLightSurface ? paper : ink,
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(
                     color: sage.withValues(alpha: .7),
@@ -604,9 +1433,9 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                         height: 42,
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                         decoration: BoxDecoration(
-                          color: isNote
-                              ? const Color(0xFFE4E7DC)
-                              : const Color(0xFF222923),
+                          color: isLightSurface
+                              ? cream
+                              : Color.lerp(ink, Colors.black, .35)!,
                           borderRadius: const BorderRadius.only(
                             topLeft: Radius.circular(8),
                             topRight: Radius.circular(8),
@@ -617,7 +1446,7 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                             Icon(
                               headerIcon,
                               size: 15,
-                              color: isNote ? sage : paleSage,
+                              color: isLightSurface ? sage : paleSage,
                             ),
                             const SizedBox(width: 8),
                             Expanded(
@@ -627,13 +1456,13 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                                 style: TextStyle(
                                   fontSize: 11,
                                   fontWeight: FontWeight.w600,
-                                  color: isNote ? ink : cream,
+                                  color: isLightSurface ? ink : cream,
                                 ),
                               ),
                             ),
                             Tag(
                               widget.asset.kind.toUpperCase(),
-                              color: isNote ? paleSage : ink,
+                              color: isLightSurface ? paleSage : ink,
                             ),
                             const SizedBox(width: 6),
                             IconButton(
@@ -645,14 +1474,20 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                               ),
                               onPressed: () => setState(() {
                                 width = 320;
-                                height = isNote ? 260 : 210;
+                                height = isQuiz
+                                    ? 340
+                                    : (isFlashcard
+                                          ? 240
+                                          : (isDocument
+                                                ? 420
+                                                : (isNote ? 260 : 210)));
                                 minimized = false;
                               }),
                               icon: Text(
                                 'S',
                                 style: TextStyle(
                                   fontSize: 10,
-                                  color: isNote ? muted : paleSage,
+                                  color: isLightSurface ? muted : paleSage,
                                 ),
                               ),
                             ),
@@ -665,14 +1500,20 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                               ),
                               onPressed: () => setState(() {
                                 width = 460;
-                                height = isNote ? 340 : 300;
+                                height = isQuiz
+                                    ? 440
+                                    : (isFlashcard
+                                          ? 320
+                                          : (isDocument
+                                                ? 580
+                                                : (isNote ? 340 : 300)));
                                 minimized = false;
                               }),
                               icon: Text(
                                 'M',
                                 style: TextStyle(
                                   fontSize: 10,
-                                  color: isNote ? muted : paleSage,
+                                  color: isLightSurface ? muted : paleSage,
                                 ),
                               ),
                             ),
@@ -685,14 +1526,20 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                               ),
                               onPressed: () => setState(() {
                                 width = 640;
-                                height = isNote ? 440 : 400;
+                                height = isQuiz
+                                    ? 560
+                                    : (isFlashcard
+                                          ? 400
+                                          : (isDocument
+                                                ? 720
+                                                : (isNote ? 440 : 400)));
                                 minimized = false;
                               }),
                               icon: Text(
                                 'L',
                                 style: TextStyle(
                                   fontSize: 10,
-                                  color: isNote ? muted : paleSage,
+                                  color: isLightSurface ? muted : paleSage,
                                 ),
                               ),
                             ),
@@ -712,7 +1559,7 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                                     ? Icons.expand_less
                                     : Icons.expand_more,
                                 size: 16,
-                                color: isNote ? ink : paleSage,
+                                color: isLightSurface ? ink : paleSage,
                               ),
                             ),
                             IconButton(
@@ -726,7 +1573,7 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                               icon: Icon(
                                 Icons.close,
                                 size: 16,
-                                color: isNote ? ink : cream,
+                                color: isLightSurface ? ink : cream,
                               ),
                             ),
                           ],
@@ -762,6 +1609,20 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                                           ),
                                         ),
                                       ),
+                                    )
+                                  : isQuiz
+                                  ? _buildFloatingQuiz()
+                                  : isFlashcard
+                                  ? FlashcardFlipWidget(
+                                      card: widget.asset,
+                                      compact: width < 420,
+                                    )
+                                  : isDocument
+                                  ? SourceReader(
+                                      store: widget.store,
+                                      object: widget.asset,
+                                      onCapture: (_, _) {},
+                                      onAsk: (_) {},
                                     )
                                   : Padding(
                                       padding: const EdgeInsets.all(12),
@@ -805,9 +1666,9 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                       Container(
                         height: 38,
                         padding: const EdgeInsets.symmetric(horizontal: 10),
-                        color: isNote
-                            ? const Color(0xFFEDEFE5)
-                            : const Color(0xFF1B211C),
+                        color: isLightSurface
+                            ? line.withValues(alpha: .45)
+                            : Color.lerp(ink, Colors.black, .35)!,
                         child: Row(
                           children: [
                             if (isVideo || isAudio) ...[
@@ -831,7 +1692,7 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                                 formatDuration(currentPos),
                                 style: TextStyle(fontSize: 10, color: paleSage),
                               ),
-                               Expanded(
+                              Expanded(
                                 child: SliderTheme(
                                   data: SliderThemeData(
                                     thumbShape: const RoundSliderThumbShape(
@@ -907,6 +1768,36 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                                   color: paleSage,
                                 ),
                               ),
+                            ] else if (isQuiz) ...[
+                              Expanded(
+                                child: Text(
+                                  widget.asset.title,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(fontSize: 10, color: muted),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Tag('QUIZ', color: paleSage),
+                            ] else if (isFlashcard) ...[
+                              Expanded(
+                                child: Text(
+                                  widget.asset.title,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(fontSize: 10, color: muted),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Tag('CARD', color: paleSage),
+                            ] else if (isDocument) ...[
+                              Expanded(
+                                child: Text(
+                                  widget.asset.title,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(fontSize: 10, color: muted),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Tag('DOCUMENT', color: paleSage),
                             ] else ...[
                               Text(
                                 '${widget.asset.body.trim().isEmpty ? 0 : widget.asset.body.trim().split(RegExp(r'\s+')).length} words',
@@ -1125,7 +2016,7 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                         child: Icon(
                           Icons.south_east,
                           size: 11,
-                          color: isNote ? muted : paleSage,
+                          color: isLightSurface ? muted : paleSage,
                         ),
                       ),
                     ),
@@ -1137,6 +2028,36 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
         ),
       ),
     );
+  }
+
+  Widget _buildFloatingQuiz() {
+    try {
+      final decoded = jsonDecode(widget.asset.body);
+      final quiz = QuizData.fromJson(Map<String, dynamic>.from(decoded));
+      return QuizPlayerWidget(
+        quiz: quiz,
+        store: widget.store,
+        compact: width < 420,
+        onClose: widget.onClose,
+      );
+    } catch (_) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.quiz_outlined, size: 32, color: muted),
+              const SizedBox(height: 8),
+              Text(
+                'Could not load quiz data.',
+                style: TextStyle(fontSize: 12, color: muted),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
   }
 }
 
@@ -1177,7 +2098,7 @@ class StoryboardCard extends StatelessWidget {
     final asset = mediaAsset;
     final isVideo = asset?.meta['mediaType'] == 'video';
     final duration = (shot.meta['duration'] as num? ?? 5.0).toDouble();
-    final camera = shot.meta['camera'] as String? ?? 'Medium Shot';
+    final camera = shot.meta['camera'] as String? ?? 'Explanation';
 
     return DragTarget<CreativeObject>(
       onAcceptWithDetails: (d) {
@@ -1336,7 +2257,7 @@ class StoryboardCard extends StatelessWidget {
                             ),
                           ),
                           PopupMenuButton<String>(
-                            tooltip: 'Shot options',
+                            tooltip: 'Segment options',
                             onSelected: (v) {
                               if (v == 'edit') onEdit();
                               if (v == 'delete') onDelete();
@@ -1345,7 +2266,7 @@ class StoryboardCard extends StatelessWidget {
                             itemBuilder: (_) => [
                               const PopupMenuItem(
                                 value: 'edit',
-                                child: Text('Edit shot details'),
+                                child: Text('Edit lesson segment'),
                               ),
                               if (isVideo)
                                 const PopupMenuItem(
@@ -1354,7 +2275,7 @@ class StoryboardCard extends StatelessWidget {
                                 ),
                               const PopupMenuItem(
                                 value: 'delete',
-                                child: Text('Delete shot'),
+                                child: Text('Delete segment'),
                               ),
                             ],
                             icon: const Icon(Icons.more_vert, size: 16),

@@ -22,6 +22,9 @@ class DocumentEditor extends StatefulWidget {
     required this.onAskAi,
     required this.onPreview,
     required this.onDelete,
+    this.siblingDocuments = const [],
+    this.onSwitchDocument,
+    this.onNewDocument,
   });
 
   final StudioStore store;
@@ -30,6 +33,9 @@ class DocumentEditor extends StatefulWidget {
   final void Function(SelectionRequest) onAskAi;
   final void Function(CreativeObject) onPreview;
   final FutureOr<void> Function() onDelete;
+  final List<CreativeObject> siblingDocuments;
+  final ValueChanged<CreativeObject>? onSwitchDocument;
+  final VoidCallback? onNewDocument;
 
   @override
   State<DocumentEditor> createState() => _DocumentEditorState();
@@ -662,7 +668,7 @@ class _DocumentEditorState extends State<DocumentEditor> {
             ),
           ),
           child: Tooltip(
-            message: 'Drag text to Research Notes or Script',
+            message: 'Drag text to Research Notes or Study Notes',
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
               child: Icon(Icons.drag_indicator, size: 16, color: sage),
@@ -775,21 +781,78 @@ class _DocumentEditorState extends State<DocumentEditor> {
             child: Row(
               children: [
                 Icon(
-                  script ? Icons.movie_edit : Icons.menu_book_outlined,
+                  script ? Icons.edit_note : Icons.auto_stories_outlined,
                   size: 17,
                   color: sage,
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Text(
-                    widget.object.title,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+                  child: widget.siblingDocuments.isEmpty
+                      ? Text(
+                          widget.object.title,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        )
+                      : PopupMenuButton<String>(
+                          tooltip: 'Switch document',
+                          onSelected: (id) {
+                            final matches = widget.siblingDocuments.where(
+                              (document) => document.id == id,
+                            );
+                            if (matches.isNotEmpty) {
+                              widget.onSwitchDocument?.call(matches.first);
+                            }
+                          },
+                          itemBuilder: (_) => widget.siblingDocuments
+                              .map(
+                                (document) => PopupMenuItem(
+                                  value: document.id,
+                                  child: Row(
+                                    children: [
+                                      if (document.id == widget.object.id)
+                                        Icon(Icons.check, size: 15, color: sage)
+                                      else
+                                        const SizedBox(width: 15),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          document.title,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  widget.object.title,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              const Icon(Icons.expand_more, size: 16),
+                            ],
+                          ),
+                        ),
                 ),
+                if (widget.onNewDocument != null)
+                  IconButton(
+                    tooltip: script ? 'New topic / note' : 'New study unit',
+                    onPressed: widget.onNewDocument,
+                    icon: const Icon(Icons.add, size: 17),
+                  ),
                 IconButton(
                   tooltip: 'Rename',
                   onPressed: () async {
@@ -806,7 +869,7 @@ class _DocumentEditorState extends State<DocumentEditor> {
                   icon: const Icon(Icons.edit_outlined, size: 16),
                 ),
                 IconButton(
-                  tooltip: 'Save full revision',
+                  tooltip: 'Save note snapshot',
                   onPressed: () => widget.store.snapshot(widget.object),
                   icon: const Icon(Icons.history, size: 17),
                 ),
@@ -849,28 +912,28 @@ class _DocumentEditorState extends State<DocumentEditor> {
                     formatTools(),
                     if (script)
                       PopupMenuButton<String>(
-                        tooltip: 'Screenplay elements',
+                        tooltip: 'Study elements',
                         onSelected: insertText,
                         itemBuilder: (_) => const [
                           PopupMenuItem(
-                            value: '\nINT. LOCATION — DAY\n\n',
-                            child: Text('Scene heading (INT/EXT)'),
+                            value: '\n### Topic / Section Heading\n\n',
+                            child: Text('Topic / Section Heading'),
+                          ),
+                          PopupMenuItem(
+                            value: '\n> **Key Takeaway:** \n\n',
+                            child: Text('Key Takeaway / Summary Callout'),
+                          ),
+                          PopupMenuItem(
+                            value: '\n* **Term / Concept:** \n',
+                            child: Text('Definition / Concept Item'),
                           ),
                           PopupMenuItem(
                             value:
-                                '\n                         CHARACTER\n              Dialogue goes here.\n',
-                            child: Text('Character & dialogue'),
-                          ),
-                          PopupMenuItem(
-                            value: '\n                    (quietly)\n',
-                            child: Text('Parenthetical'),
-                          ),
-                          PopupMenuItem(
-                            value: '\nFADE OUT.\n',
-                            child: Text('Transition'),
+                                '\n---\n**Review Question / Checkpoint:** \n\n',
+                            child: Text('Review Question / Check'),
                           ),
                         ],
-                        icon: const Icon(Icons.movie_edit, size: 17),
+                        icon: const Icon(Icons.playlist_add, size: 17),
                       ),
                   ],
                 ),
@@ -1001,7 +1064,7 @@ class _DocumentEditorState extends State<DocumentEditor> {
                               Icon(Icons.download, size: 16, color: ink),
                               const SizedBox(width: 8),
                               Text(
-                                'DROP ASSET TO EMBED IN SCRIPT',
+                                'DROP ASSET TO EMBED IN NOTE',
                                 style: TextStyle(
                                   fontSize: 10,
                                   fontWeight: FontWeight.bold,

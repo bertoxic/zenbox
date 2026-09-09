@@ -95,28 +95,45 @@ class StudioStore extends ChangeNotifier {
     (e) => e.id == currentId,
     orElse: () => projects.first,
   );
-  File get file => File('${directory.path}/studio.json');
+  File get file => File('${directory.path}/zenbox.json');
   Future<void> load() async {
     final support = await getApplicationSupportDirectory();
-    directory = Directory('${support.path}/Xandora Studio');
+    directory = Directory('${support.path}/Zenbox');
     await directory.create(recursive: true);
     await Directory('${directory.path}/media').create(recursive: true);
     if (!file.existsSync()) {
       final appData = Platform.environment['APPDATA'] ?? '';
       final candidates = [
+        File('${directory.path}/studio.json'),
+        File('${support.path}/Zenbox/zenbox.json'),
+        File('${support.path}/Zenbox/studio.json'),
+        File('${support.path}/Xandora Studio/studio.json'),
         File('${support.path}/studio.json'),
         if (appData.isNotEmpty) ...[
-          File('$appData/com.xandorabox/Xandora Studio/Xandora Studio/studio.json'),
-          File('$appData/com.xandorabox/Xandora Studio/studio.json'),
+          File('$appData/com.xandorabox/Zenbox/Zenbox/zenbox.json'),
           File('$appData/com.xandorabox/Zenbox/Xandora Studio/studio.json'),
-          File('$appData/com.bertoxic/Xandora Studio/Xandora Studio/studio.json'),
+          File('$appData/com.xandorabox/Xandora Studio/studio.json'),
+          File('$appData/com.bertoxic/Xandora Studio/studio.json'),
         ],
       ];
       for (final c in candidates) {
         if (c.existsSync()) {
-          directory = c.parent;
-          await Directory('${directory.path}/media').create(recursive: true);
-          break;
+          try {
+            final content = c.readAsStringSync();
+            if (content.trim().isNotEmpty) {
+              file.writeAsStringSync(content, flush: true);
+              final mediaDir = Directory('${c.parent.path}/media');
+              if (mediaDir.existsSync() && c.parent.path != directory.path) {
+                for (final item in mediaDir.listSync()) {
+                  if (item is File) {
+                    final dest = '${directory.path}/media/${item.uri.pathSegments.last}';
+                    if (!File(dest).existsSync()) item.copySync(dest);
+                  }
+                }
+              }
+              break;
+            }
+          } catch (_) {}
         }
       }
     }
@@ -135,6 +152,7 @@ class StudioStore extends ChangeNotifier {
         file.copySync('${file.path}.damaged-${newId()}');
       }
     }
+    settings.putIfAbsent('studentWorkspace', () => true);
     if (projects.isEmpty) {
       projects.add(seedProject());
       currentId = projects.first.id;
@@ -257,129 +275,115 @@ class StudioStore extends ChangeNotifier {
 }
 
 Project seedProject() {
-  final scene = CreativeObject(
+  final topic1 = CreativeObject(
     kind: 'script',
-    title: '01 · The last light',
+    title: '01 · Working Memory & Cognitive Load',
     body:
-        'EXT. COASTAL OBSERVATORY — DUSK\n\nA narrow ribbon of road follows the edge of the sea. At its end, an observatory stands against a sky the color of old copper.\n\nELENA (32), a field recorder slung over her shoulder, pauses at the gate. She listens.\n\nNot to the ocean. To the silence behind it.\n\n                         ELENA\n              It used to sound different.\n\nHer brother NOAH waits by the open door, holding a box of their father’s tapes.\n\n                         NOAH\n              Everything does when you leave\n              it long enough.\n\nShe takes the box. Inside, one cassette is labeled:\n\n              “FOR WHEN THE LIGHT GOES OUT.”\n\nThe lighthouse beam sweeps across them. Once. Then darkness.',
+        '### 1. Working Memory Architecture\n\nWorking memory provides temporary storage and real-time manipulation of task-critical information.\n\n> **Key Takeaway:** Capacity is strictly bottlenecked (Miller\'s Law: 7 ± 2 items; modern consensus: ~4 chunks). Cognitive overload occurs when extraneous load consumes processing bandwidth.\n\n* **Phonological Loop:** Rehearses verbal and acoustic tokens.\n* **Visuospatial Sketchpad:** Holds spatial configurations and mental imagery.\n* **Central Executive:** Allocates attention and resolves cognitive conflict.\n\n--- \n**Review Prompt:** How does chunking alleviate extraneous cognitive load?',
     meta: {
-      'status': 'In progress',
-      'act': 'Act I',
+      'status': 'Reviewed',
+      'act': 'Unit 1 · Cognitive Architecture',
       'synopsis':
-          'Elena returns to the observatory and discovers a recording left by her father.',
+          'Exploration of working memory sub-systems and cognitive load management.',
     },
   );
-  final elena = CreativeObject(
-    kind: 'character',
-    title: 'Elena Voss',
+  final defMemory = CreativeObject(
+    kind: 'definition',
+    title: 'Working Memory',
     body:
-        'A sound archivist who trusts recordings more than memories.\n\nWant: Understand why her father disappeared.\nNeed: Accept that some things cannot be preserved.\nVoice: Precise, observant, quietly funny.',
-    meta: {'role': 'Protagonist'},
+        'A limited-capacity system responsible for temporary maintenance and manipulation of information during complex cognitive tasks.',
+    meta: {'role': 'Core Definition', 'category': 'Architecture'},
   );
-  final noah = CreativeObject(
-    kind: 'character',
-    title: 'Noah Voss',
+  final formCurve = CreativeObject(
+    kind: 'formula',
+    title: 'Ebbinghaus Forgetting Curve',
     body:
-        'Elena’s younger brother. The one who stayed. Keeps the observatory running with spare parts and stubborn optimism.',
-    meta: {'role': 'Supporting'},
+        'R = e^(-t/S)\n\nWhere:\n• R = Retrievability / Memory Retention\n• t = Time elapsed since initial learning\n• S = Stability of memory trace (strengthened by spaced active retrieval)',
+    meta: {'role': 'Mathematical Model', 'category': 'Quantitative'},
   );
-  scene.links.addAll([elena.id, noah.id]);
+  final ruleRecall = CreativeObject(
+    kind: 'rule',
+    title: 'Active Recall vs Recognition',
+    body:
+        'Rule: Never mistake passive recognition for durable active recall. Familiarity when rereading does not equal ability to generate solutions from memory. Always self-test.',
+    meta: {'role': 'Core Rule / Fact', 'category': 'Metacognition'},
+  );
+  topic1.links.addAll([defMemory.id, formCurve.id, ruleRecall.id]);
+
   return Project(
-    title: 'Where the light goes',
+    title: 'Cognitive Science & Learning Systems',
     description:
-        'A quiet mystery about memory, distance, and the things we leave behind.',
+        'Structured study notes, concept glossary, and synthesized unit guides on human memory and active recall.',
     objects: [
-      scene,
+      topic1,
       CreativeObject(
         kind: 'script',
-        title: '02 · A voice from the past',
+        title: '02 · Synaptic Plasticity & LTP',
         body:
-            'INT. OBSERVATORY — NIGHT\n\nElena threads the tape into an old recorder. The reels begin to turn.\n\nA breath. Static. Then her father’s voice.',
-        meta: {'status': 'Draft', 'act': 'Act I'},
+            '### 2. Neural Mechanisms of Consolidation\n\nLong-Term Potentiation (LTP) represents the persistent strengthening of synapses based on recent stimulation patterns.\n\n> **Key Takeaway:** Repeated active retrieval triggers dendritic spine remodeling and protein synthesis, transferring memory traces from the hippocampus to distributed neocortical networks.\n\n* **Active Retrieval Practice:** Generates potentiation signals superior to passive rereading.\n* **The Spacing Effect:** Distributed sessions interrupt synaptic decay before baseline loss.',
+        meta: {'status': 'In progress', 'act': 'Unit 1 · Neural Mechanisms'},
       ),
       CreativeObject(
         kind: 'script',
-        title: '03 · Low tide',
+        title: '03 · Spaced Retrieval Strategies',
         body:
-            'EXT. TIDAL POOLS — MORNING\n\nThe sea has pulled back, revealing a path neither of them remembers.',
-        meta: {'status': 'Idea', 'act': 'Act II'},
+            '### 3. Implementing Expanding Schedule Intervals\n\nOptimal review spacing expands exponentially: 1 day -> 3 days -> 7 days -> 21 days -> 60 days.',
+        meta: {'status': 'Draft', 'act': 'Unit 2 · Practical Application'},
       ),
       CreativeObject(
         kind: 'manuscript',
-        title: 'Chapter one · The return',
+        title: 'Unit 1 Summary · Cognitive Foundations',
         body:
-            'The first thing Elena noticed was the silence.\n\nNot the absence of sound—the coast was full of it—but the absence of the particular hum she had carried in her memory for eleven years. Her father’s observatory had always sounded alive.\n\nNow, standing at the rusted gate with her recorder in one hand, she could hear only the sea.\n\nShe pressed record anyway.',
+            'The foundation of effective learning balances working memory limits against long-term consolidation mechanisms.\n\nWorking memory is bottlenecked by capacity, meaning instructional materials must minimize extraneous presentation overhead. Transitioning concepts into long-term memory demands effortful retrieval practice rather than passive re-reading.\n\nBy organizing concepts into structured mental models and testing retrieval early, students solidify synaptic pathways and build durable schemas.',
       ),
-      elena,
-      noah,
+      defMemory,
+      formCurve,
+      ruleRecall,
       CreativeObject(
-        kind: 'location',
-        title: 'The observatory',
+        kind: 'concept',
+        title: 'Cognitive Load Theory',
         body:
-            'Built in 1926 above the northern headland. Salt-stained windows, brass instruments, and shelves of unlabeled tapes. A lighthouse shares its electrical supply.',
+            'Delineates mental effort into Intrinsic (inherent difficulty), Extraneous (presentation format), and Germane (schema construction). Good study systems minimize extraneous load to maximize germane processing.',
+        meta: {'role': 'Framework'},
       ),
       CreativeObject(
         kind: 'note',
-        title: 'What if the silence is the clue?',
+        title: 'Exam Preparation Checklist',
         body:
-            'The recording contains a missing frequency. Something that only Elena would notice.',
+            '1. Test recall on working memory subcomponents.\n2. Calculate decay interval using forgetting curve.\n3. Diagram hippocampal-cortical dialogue.',
         meta: {'tray': true},
       ),
       CreativeObject(
         kind: 'note',
-        title: 'A visual rhythm',
+        title: 'Self-explanation technique',
         body:
-            'Wide landscapes. Intimate details. Let the spaces between the dialogue do the work.',
+            'When writing study notes, explain why a step works in your own words before looking at the solution.',
         meta: {'tray': true},
       ),
       CreativeObject(
         kind: 'research',
-        title: 'Acoustic memory',
+        title: 'Empirical Spacing Trials (Karpicke & Roediger)',
         body:
-            'Explore the relationship between familiar sounds and autobiographical memory. Collect sources and quotations here.',
-        meta: {'url': '', 'status': 'To explore'},
+            'Landmark research confirming that retrieval practice produces large gains in long-term retention compared to repeated study with immediate restudy.',
+        meta: {'url': 'https://en.wikipedia.org/wiki/Testing_effect', 'status': 'Verified'},
       ),
       CreativeObject(
         kind: 'board',
-        title: 'The feeling of the film',
-        body:
-            'Salt air. Faded paper. The warmth of a light in a distant window.',
+        title: 'Working Memory',
+        body: 'Strict 4-chunk bottleneck · Central executive & phonological loop',
         meta: {'x': 100.0, 'y': 100.0, 'color': 0},
       ),
       CreativeObject(
         kind: 'board',
-        title: 'The central question',
-        body: 'Can you find someone by listening to what they left behind?',
-        meta: {'x': 460.0, 'y': 240.0, 'color': 1},
+        title: 'Long-Term Memory',
+        body: 'Distributed cortical schemas · Synaptic consolidation via LTP',
+        meta: {'x': 460.0, 'y': 100.0, 'color': 1},
       ),
       CreativeObject(
-        kind: 'shot',
-        title: '01A · The headland',
-        body: 'An isolated observatory at the end of the coastal road.',
-        links: [scene.id],
-        meta: {'duration': 8.0, 'camera': 'Wide · Static', 'status': 'Planned'},
-      ),
-      CreativeObject(
-        kind: 'shot',
-        title: '01B · Listening',
-        body: 'Elena closes her eyes. Wind moves through her hair.',
-        links: [scene.id, elena.id],
-        meta: {
-          'duration': 5.0,
-          'camera': 'Close-up · Slow push',
-          'status': 'Planned',
-        },
-      ),
-      CreativeObject(
-        kind: 'shot',
-        title: '01C · The cassette',
-        body: 'Her thumb traces the handwritten label.',
-        links: [scene.id],
-        meta: {
-          'duration': 4.0,
-          'camera': 'Insert · Handheld',
-          'status': 'Planned',
-        },
+        kind: 'board',
+        title: 'Retrieval Practice Bridge',
+        body: 'Active testing forces retrieval from LTM back into WM, strengthening pathways',
+        meta: {'x': 280.0, 'y': 240.0, 'color': 2},
       ),
     ],
   );

@@ -11,6 +11,7 @@ import 'document_ops.dart';
 import 'model.dart';
 import 'research_browser.dart';
 import 'rich_editor.dart';
+import 'notification_service.dart';
 import 'studio.dart' show Studio;
 import 'visual.dart' show AssetThumbnail;
 import 'zenbox_model.dart';
@@ -153,8 +154,9 @@ class _ZenboxShellState extends State<ZenboxShell> {
   }
 
   void message(String text) {
-    if (mounted)
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    if (mounted) {
+      TopNotification.show(context, text);
+    }
   }
 
   Future<Map<String, String>?> form(

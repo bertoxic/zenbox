@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../zenbox_model.dart';
 import '../../zenbox_theme.dart';
+import '../../notification_service.dart';
 import 'practice_exam_view.dart';
 
 class ReviewView extends StatefulWidget {
@@ -245,8 +246,10 @@ class _ReviewViewState extends State<ReviewView> {
                       cardsReviewed: reviewed,
                     ),
                   );
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Study session saved')),
+                  TopNotification.show(
+                    context,
+                    'Study session saved',
+                    icon: Icons.check_circle_outline,
                   );
                   setState(() => reviewed = 0);
                 },

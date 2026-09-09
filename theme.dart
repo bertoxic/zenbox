@@ -47,7 +47,7 @@ Color get paper => _activeStudioPalette.paper;
 
 enum StudioThemePreset {
   sage(
-    label: 'Wooden Forest',
+    label: 'Sage',
     description: 'Zenbox natural study palette',
     primary: Color(0xFF42562E),
     background: Color(0xFFF5F5EE),
@@ -56,7 +56,7 @@ enum StudioThemePreset {
   ),
   obsidian(
     label: 'Obsidian Slate',
-    description: 'Dark focused writing retreat',
+    description: 'A quiet, low-light study space',
     primary: Color(0xFF7A9BB8),
     background: Color(0xFF181C22),
     ink: Color(0xFFE2E7ED),
@@ -64,7 +64,7 @@ enum StudioThemePreset {
   ),
   sand(
     label: 'Warm Sand',
-    description: 'Golden hour amber parchment',
+    description: 'Warm, comfortable reading',
     primary: Color(0xFFB57A3D),
     background: Color(0xFFFAF6EE),
     ink: Color(0xFF382E25),
@@ -72,7 +72,7 @@ enum StudioThemePreset {
   ),
   cobalt(
     label: 'Deep Cobalt',
-    description: 'Editorial clean cyan-indigo tone',
+    description: 'Clear blue for focused learning',
     primary: Color(0xFF456C9C),
     background: Color(0xFFF2F6FA),
     ink: Color(0xFF1E2B38),
@@ -80,7 +80,7 @@ enum StudioThemePreset {
   ),
   rosewood(
     label: 'Rosewood Velvet',
-    description: 'Elegant dramatic crimson-mauve',
+    description: 'A soft rose study palette',
     primary: Color(0xFFA55A6B),
     background: Color(0xFFFAF2F4),
     ink: Color(0xFF382329),
@@ -114,7 +114,7 @@ class StudioSettings {
 
   const StudioSettings({
     this.themePreset = StudioThemePreset.sage,
-    this.editorFont = 'Georgia',
+    this.editorFont = 'Segoe UI',
     this.editorLineHeight = 1.75,
     this.autoSaveSeconds = 15,
     this.aiPersona = 'Balanced Producer',
@@ -246,27 +246,27 @@ class EmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Center(
     child: SingleChildScrollView(
-    child: Padding(
-      padding: const EdgeInsets.all(32),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 40, color: sage),
-          const SizedBox(height: 18),
-          Text(
-            title,
-            style: const TextStyle(fontSize: 21, fontFamily: 'Georgia'),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            subtitle,
-            textAlign: TextAlign.center,
-            style: TextStyle(color: muted, height: 1.7),
-          ),
-          if (action != null) ...[const SizedBox(height: 22), action!],
-        ],
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 40, color: sage),
+            const SizedBox(height: 18),
+            Text(
+              title,
+              style: const TextStyle(fontSize: 21, fontFamily: 'Georgia'),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              subtitle,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: muted, height: 1.7),
+            ),
+            if (action != null) ...[const SizedBox(height: 22), action!],
+          ],
+        ),
       ),
-    ),
     ),
   );
 }
@@ -284,40 +284,30 @@ class SectionHeading extends StatelessWidget {
   final List<Widget> actions;
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(30, 27, 30, 24),
-    child: Row(
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                eyebrow.toUpperCase(),
-                style: TextStyle(
-                  color: muted,
-                  fontSize: 9,
-                  letterSpacing: 2,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 9),
-              Text(
-                title,
-                style: const TextStyle(
-                  fontFamily: 'Georgia',
-                  fontSize: 29,
-                  letterSpacing: -.6,
-                ),
-              ),
-              if (subtitle != null) ...[
-                const SizedBox(height: 9),
-                Text(subtitle!, style: TextStyle(color: muted, fontSize: 12)),
-              ],
-            ],
-          ),
-        ),
-        ...actions,
-      ],
-    ),
+    padding: const EdgeInsets.fromLTRB(28, 26, 28, 22),
+    child: LayoutBuilder(builder: (context, constraints) {
+      final heading = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(eyebrow.toUpperCase(), style: TextStyle(color: sage, fontSize: 10,
+          letterSpacing: 1.2, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 8),
+        Text(title, style: const TextStyle(fontSize: 26,
+          fontWeight: FontWeight.w600, letterSpacing: -.6, height: 1.2)),
+        if (subtitle != null) ...[
+          const SizedBox(height: 8),
+          Text(subtitle!, style: TextStyle(color: muted, fontSize: 12, height: 1.5)),
+        ],
+      ]);
+      if (constraints.maxWidth < 700) {
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          heading,
+          if (actions.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Wrap(spacing: 6, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center,
+              children: actions),
+          ],
+        ]);
+      }
+      return Row(children: [Expanded(child: heading), ...actions]);
+    }),
   );
 }

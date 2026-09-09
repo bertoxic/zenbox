@@ -6,6 +6,7 @@ import 'package:webview_windows/webview_windows.dart';
 import 'editor.dart' show askText;
 import 'model.dart';
 import 'theme.dart';
+import 'notification_service.dart';
 import 'research_state.dart';
 
 Future<void>? _browserEnvironment;
@@ -189,9 +190,7 @@ class _ResearchBrowserViewState extends State<ResearchBrowserView> {
     );
     widget.store.add(o);
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Saved "${o.title}" to project research')),
-      );
+      TopNotification.show(context, 'Saved "${o.title}" to project research', icon: Icons.bookmark_added_outlined);
     }
   }
 
@@ -210,14 +209,16 @@ class _ResearchBrowserViewState extends State<ResearchBrowserView> {
       );
       widget.store.add(note);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Created research note from snippet: "$title"'),
-            duration: const Duration(seconds: 2),
-          ),
+        TopNotification.show(
+          context,
+          'Created research note from snippet: "$title"',
+          icon: Icons.note_add_outlined,
+          duration: const Duration(seconds: 2),
         );
       }
     } else if (data is CreativeObject) {
+      if (data.kind == 'research') return;
+      if (widget.store.project.objects.any((o) => o.id == data.id && o.kind == 'research')) return;
       final note = CreativeObject(
         kind: 'research',
         title: 'Note: ${data.title}',
@@ -234,11 +235,11 @@ class _ResearchBrowserViewState extends State<ResearchBrowserView> {
       );
       widget.store.add(note);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Created research note for "${data.title}"'),
-            duration: const Duration(seconds: 2),
-          ),
+        TopNotification.show(
+          context,
+          'Created research note for "${data.title}"',
+          icon: Icons.note_add_outlined,
+          duration: const Duration(seconds: 2),
         );
       }
     }
@@ -262,8 +263,10 @@ class _ResearchBrowserViewState extends State<ResearchBrowserView> {
       _selection = '';
       _showNotes = true;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Selection saved with its source')),
+    TopNotification.show(
+      context,
+      'Selection saved with its source',
+      icon: Icons.bookmark_added_outlined,
     );
   }
 
@@ -613,9 +616,15 @@ class _ResearchBrowserViewState extends State<ResearchBrowserView> {
                       ),
                       Expanded(
                         child: DragTarget<Object>(
-                          onWillAcceptWithDetails: (details) =>
-                              details.data is String ||
-                              details.data is CreativeObject,
+                          onWillAcceptWithDetails: (details) {
+                            if (details.data is String) return true;
+                            if (details.data is CreativeObject) {
+                              final obj = details.data as CreativeObject;
+                              if (obj.kind == 'research') return false;
+                              return true;
+                            }
+                            return false;
+                          },
                           onAcceptWithDetails: (details) =>
                               _createNoteFromDrop(details.data),
                           builder: (context, candidates, rejected) {
@@ -691,17 +700,26 @@ class _ResearchBrowserViewState extends State<ResearchBrowserView> {
                                             margin: const EdgeInsets.only(
                                               bottom: 10,
                                             ),
-                                            padding: const EdgeInsets.all(12),
                                             decoration: BoxDecoration(
                                               color: cream,
                                               borderRadius:
                                                   BorderRadius.circular(6),
                                               border: Border.all(color: line),
                                             ),
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
+                                            child: Material(
+                                              color: Colors.transparent,
+                                              child: InkWell(
+                                                borderRadius:
+                                                    BorderRadius.circular(6),
+                                                onTap: () =>
+                                                    widget.onOpenNote(note),
+                                                child: Padding(
+                                                  padding:
+                                                      const EdgeInsets.all(12),
+                                                  child: Column(
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment.start,
+                                                    children: [
                                                 Row(
                                                   children: [
                                                     Expanded(
@@ -805,7 +823,11 @@ class _ResearchBrowserViewState extends State<ResearchBrowserView> {
                                               ],
                                             ),
                                           ),
-                                        );
+                                        ),
+                                      ),
+                                      ),
+                                      )
+                                    ;
                                       },
                                     ),
                                   if (isHovering && researchNotes.isNotEmpty)
