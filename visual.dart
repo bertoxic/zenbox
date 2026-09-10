@@ -12,8 +12,9 @@ import 'quiz_view.dart';
 import 'zenbox/reader.dart';
 import 'notification_service.dart';
 import 'theme.dart';
+import 'markdown_view.dart';
 
-class AssetThumbnail extends StatelessWidget {
+class AssetThumbnail extends StatefulWidget {
   const AssetThumbnail({
     super.key,
     required this.store,
@@ -24,7 +25,40 @@ class AssetThumbnail extends StatelessWidget {
   final CreativeObject asset;
   final BoxFit fit;
   @override
+  State<AssetThumbnail> createState() => _AssetThumbnailState();
+}
+
+class _AssetThumbnailState extends State<AssetThumbnail> {
+  bool _loadingPoster = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPoster();
+  }
+
+  @override
+  void didUpdateWidget(covariant AssetThumbnail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.asset.id != widget.asset.id) _loadPoster();
+  }
+
+  void _loadPoster() {
+    if (widget.asset.meta['mediaType'] != 'video' ||
+        widget.asset.meta['thumbnail'] != null ||
+        _loadingPoster)
+      return;
+    _loadingPoster = true;
+    widget.store.ensureVideoThumbnail(widget.asset).whenComplete(() {
+      if (mounted) setState(() => _loadingPoster = false);
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final asset = widget.asset;
+    final store = widget.store;
+    final fit = widget.fit;
     if (asset.meta['mediaType'] == 'image') {
       return Image.file(
         File(store.mediaPath(asset)),
@@ -33,6 +67,38 @@ class AssetThumbnail extends StatelessWidget {
             Center(child: Icon(Icons.broken_image_outlined, color: muted)),
       );
     }
+    if (asset.meta['mediaType'] == 'video' && asset.meta['thumbnail'] != null) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.file(
+            File(store.thumbnailPath(asset)),
+            fit: fit,
+            errorBuilder: (_, _, _) => _fallback(asset),
+          ),
+          Center(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: .48),
+                shape: BoxShape.circle,
+              ),
+              child: const Padding(
+                padding: EdgeInsets.all(7),
+                child: Icon(
+                  Icons.play_arrow_rounded,
+                  size: 25,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+    return _fallback(asset);
+  }
+
+  Widget _fallback(CreativeObject asset) {
     return ColoredBox(
       color: paleSage.withValues(alpha: .4),
       child: Center(
@@ -1268,6 +1334,7 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
   late double posX;
   late double posY;
   bool minimized = false;
+  bool markdownPreview = false;
   bool isPlaying = true;
   Duration currentPos = Duration.zero;
   Duration totalDuration = Duration.zero;
@@ -1466,6 +1533,28 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                             ),
                             const SizedBox(width: 6),
                             IconButton(
+                              tooltip: markdownPreview
+                                  ? 'Edit markdown'
+                                  : 'Preview markdown',
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(
+                                minWidth: 24,
+                                minHeight: 24,
+                              ),
+                              onPressed: isNote
+                                  ? () => setState(
+                                      () => markdownPreview = !markdownPreview,
+                                    )
+                                  : null,
+                              icon: Icon(
+                                markdownPreview
+                                    ? Icons.edit_outlined
+                                    : Icons.preview_outlined,
+                                size: 15,
+                                color: isLightSurface ? muted : paleSage,
+                              ),
+                            ),
+                            IconButton(
                               tooltip: 'Small (320px)',
                               padding: EdgeInsets.zero,
                               constraints: const BoxConstraints(
@@ -1626,23 +1715,57 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                                     )
                                   : Padding(
                                       padding: const EdgeInsets.all(12),
-                                      child: TextField(
-                                        controller: noteController,
-                                        maxLines: null,
-                                        expands: true,
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          height: 1.6,
-                                          color: ink,
-                                        ),
-                                        decoration: const InputDecoration(
-                                          border: InputBorder.none,
-                                          hintText: 'Notes or thoughts…',
-                                        ),
-                                        onChanged: (v) {
-                                          widget.asset.body = v;
-                                          widget.store.changed();
-                                        },
+                                      child: Column(
+                                        children: [
+                                          TextFormField(
+                                            initialValue: widget.asset.title,
+                                            style: TextStyle(
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.w700,
+                                              color: ink,
+                                            ),
+                                            decoration: const InputDecoration(
+                                              border: InputBorder.none,
+                                              hintText: 'Title',
+                                            ),
+                                            onChanged: (v) {
+                                              widget.asset.title = v;
+                                              widget.store.changed();
+                                            },
+                                          ),
+                                          const Divider(height: 12),
+                                          Expanded(
+                                            child: markdownPreview
+                                                ? SingleChildScrollView(
+                                                    child: MarkdownView(
+                                                      data: widget.asset.body,
+                                                      selectable: true,
+                                                      compact: true,
+                                                    ),
+                                                  )
+                                                : TextField(
+                                                    controller: noteController,
+                                                    maxLines: null,
+                                                    expands: true,
+                                                    style: TextStyle(
+                                                      fontSize: 12,
+                                                      height: 1.6,
+                                                      color: ink,
+                                                    ),
+                                                    decoration:
+                                                        const InputDecoration(
+                                                          border:
+                                                              InputBorder.none,
+                                                          hintText:
+                                                              'Notes or thoughts…',
+                                                        ),
+                                                    onChanged: (v) {
+                                                      widget.asset.body = v;
+                                                      widget.store.changed();
+                                                    },
+                                                  ),
+                                          ),
+                                        ],
                                       ),
                                     ),
                             ),

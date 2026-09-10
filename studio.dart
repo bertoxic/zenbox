@@ -18,6 +18,7 @@ import 'quiz_service.dart';
 import 'quiz_view.dart';
 import 'focus_mode.dart';
 import 'notification_service.dart';
+import 'pdf_exporter.dart';
 import 'study_workflow.dart';
 
 const modes = [
@@ -45,6 +46,14 @@ const modeIcons = [
   Icons.travel_explore,
   Icons.lightbulb_outline,
   Icons.school_outlined,
+];
+
+const dashboardWallpapers = [
+  'assets/illustrations/learning_workspace_hero.png',
+  'assets/illustrations/dashboard_hero.jpg',
+  'assets/illustrations/dashboard_study_library.png',
+  'assets/illustrations/dashboard_cozy_nook.png',
+  'assets/illustrations/dashboard_note_arrangement.png',
 ];
 
 class Studio extends StatefulWidget {
@@ -78,6 +87,9 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
   int _nextFloatingWidgetId = 0;
   bool storyboardGridView = false;
   bool scratchpadGridView = false;
+  bool resourceGridView = false;
+  bool resourceTreeCollapsed = false;
+  String selectedResourceFolder = 'all';
   bool splitView = false;
   String secondaryMode = 'Scratchpad';
   double splitRatio = .5;
@@ -150,7 +162,7 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
     }
     if (selected != null) {
       store.snapshot(selected!);
-      selected!.body += '\n\n$newText';
+      appendText(selected!, newText);
       store.changed();
       setState(() {});
       toast('Text added to "${selected!.title}"');
@@ -201,6 +213,8 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
     selectedId = project.layout['selected'] as String?;
     splitView = project.layout['splitView'] == true;
     scratchpadGridView = project.layout['scratchpadGridView'] == true;
+    resourceGridView = project.layout['resourceGridView'] == true;
+    resourceTreeCollapsed = project.layout['resourceTreeCollapsed'] == true;
     secondaryMode = project.layout['secondaryMode'] as String? ?? 'Scratchpad';
     if (!modes.contains(secondaryMode)) secondaryMode = 'Scratchpad';
     splitRatio =
@@ -222,6 +236,8 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
       'selected': selectedId,
       'splitView': splitView,
       'scratchpadGridView': scratchpadGridView,
+      'resourceGridView': resourceGridView,
+      'resourceTreeCollapsed': resourceTreeCollapsed,
       'secondaryMode': secondaryMode,
       'splitRatio': splitRatio,
     });
@@ -406,7 +422,20 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
     );
     store.add(o);
     open(o);
-    if (!['script', 'manuscript', 'asset'].contains(kind)) await edit(o);
+    if (kind == 'note' ||
+        [
+          'definition',
+          'formula',
+          'concept',
+          'rule',
+          'character',
+          'location',
+          'lore',
+        ].contains(kind)) {
+      openFloatingVideo(o);
+    } else if (!['script', 'manuscript', 'asset'].contains(kind)) {
+      await edit(o);
+    }
   }
 
   Future<void> edit(CreativeObject o) async {
@@ -519,7 +548,16 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
       bytes: Uint8List.fromList(utf8.encode(o.body)),
       dialogTitle: 'Export document as Markdown',
     );
-    if (result != null) toast('Exported ${o.title}');
+    if (result != null) toast('Markdown exported: ${o.title}');
+  }
+
+  Future<void> exportPdf(CreativeObject o) async {
+    final result = await FilePicker.saveFile(
+      fileName: '${safeName(o.title)}.pdf',
+      bytes: await NotePdfExporter(store: store, project: project).build(o),
+      dialogTitle: 'Export note as PDF',
+    );
+    if (result != null) toast('PDF exported: ${o.title}');
   }
 
   String safeName(String value) =>
@@ -542,6 +580,16 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
       archive.addFile(
         ArchiveFile('media/${asset.meta['file']}', bytes.length, bytes),
       );
+      final posterName = asset.meta['thumbnail'];
+      if (posterName is String) {
+        final poster = File('${store.directory.path}/media/$posterName');
+        if (await poster.exists()) {
+          final posterBytes = await poster.readAsBytes();
+          archive.addFile(
+            ArchiveFile('media/$posterName', posterBytes.length, posterBytes),
+          );
+        }
+      }
     }
     final result = await FilePicker.saveFile(
       fileName: '${safeName(project.title)}.zenbox',
@@ -592,6 +640,12 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
       if (archive.findFile('media/$name') == null) {
         throw FormatException('Missing media: $name');
       }
+      final posterName = asset.meta['thumbnail'];
+      if (posterName is String &&
+          (!RegExp(r'^[a-zA-Z0-9_.-]+$').hasMatch(posterName) ||
+              archive.findFile('media/$posterName') == null)) {
+        asset.meta.remove('thumbnail');
+      }
     }
     for (final asset in imported.of('asset')) {
       final name = asset.meta['file'] as String;
@@ -601,6 +655,15 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
         '${store.directory.path}/media/$newName',
       ).writeAsBytes(bytes, flush: true);
       asset.meta['file'] = newName;
+      final posterName = asset.meta['thumbnail'];
+      if (posterName is String) {
+        final posterBytes = archive.findFile('media/$posterName')!.content;
+        final newPosterName = '${newId()}-thumb.jpg';
+        await File(
+          '${store.directory.path}/media/$newPosterName',
+        ).writeAsBytes(posterBytes, flush: true);
+        asset.meta['thumbnail'] = newPosterName;
+      }
     }
     final p = Project(
       title: imported.title,
@@ -1226,8 +1289,11 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
         ),
         const SizedBox(width: 10),
         PopupMenuButton<String>(
-          onSelected: (v) =>
-              run(v == 'project' ? exportProject : () => exportText(selected!)),
+          onSelected: (v) => run(switch (v) {
+            'project' => exportProject,
+            'pdf' => () => exportPdf(selected!),
+            _ => () => exportText(selected!),
+          }),
           itemBuilder: (_) => [
             const PopupMenuItem(
               value: 'project',
@@ -1235,8 +1301,13 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
             ),
             if (selected != null && selected!.kind != 'asset')
               const PopupMenuItem(
-                value: 'document',
-                child: Text('Current document'),
+                value: 'pdf',
+                child: Text('Current note as PDF'),
+              ),
+            if (selected != null && selected!.kind != 'asset')
+              const PopupMenuItem(
+                value: 'markdown',
+                child: Text('Current note as Markdown'),
               ),
           ],
           child: Container(
@@ -1257,6 +1328,164 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
       ],
     ),
   );
+  Widget _navigationFolderEntry(Map<String, String> folder, {int depth = 0}) {
+    final active =
+        selectedResourceFolder == folder['id'] && mode == 'Media library';
+    final directFiles = project
+        .of('asset')
+        .where((asset) => asset.meta['folderId'] == folder['id'])
+        .length;
+    return Column(
+      children: [
+        InkWell(
+          borderRadius: BorderRadius.circular(5),
+          onTap: () {
+            navigate('Media library');
+            setState(() => selectedResourceFolder = folder['id']!);
+          },
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 140),
+            margin: const EdgeInsets.only(bottom: 2),
+            padding: EdgeInsets.fromLTRB(10 + depth * 12, 7, 10, 7),
+            decoration: BoxDecoration(
+              color: active
+                  ? paleSage.withValues(alpha: .72)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(5),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.folder_outlined,
+                  size: 13,
+                  color: active ? ink : muted,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    folder['name']!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+                      color: active ? ink : muted,
+                    ),
+                  ),
+                ),
+                Text(
+                  '$directFiles',
+                  style: TextStyle(fontSize: 9, color: muted),
+                ),
+              ],
+            ),
+          ),
+        ),
+        for (final child in _foldersIn(folder['id']))
+          _navigationFolderEntry(child, depth: depth + 1),
+      ],
+    );
+  }
+
+  Future<void> _chooseOverviewWallpaper() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Wrap(
+            runSpacing: 8,
+            children: [
+              const ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text('Dashboard illustration'),
+                subtitle: Text(
+                  'Choose a Zenbox illustration or add your own image.',
+                ),
+              ),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  for (final asset in dashboardWallpapers)
+                    InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: () {
+                        setState(() {
+                          project.layout['overviewWallpaperAsset'] = asset;
+                          project.layout.remove('overviewWallpaper');
+                        });
+                        saveLayout();
+                        Navigator.pop(context);
+                      },
+                      child: Container(
+                        width: 118,
+                        height: 74,
+                        clipBehavior: Clip.antiAlias,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color:
+                                project.layout['overviewWallpaperAsset'] ==
+                                    asset
+                                ? sage
+                                : line,
+                            width:
+                                project.layout['overviewWallpaperAsset'] ==
+                                    asset
+                                ? 2
+                                : 1,
+                          ),
+                        ),
+                        child: Image.asset(asset, fit: BoxFit.cover),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.add_photo_alternate_outlined),
+                title: const Text('Use my image…'),
+                onTap: () async {
+                  final result = await FilePicker.pickFiles(
+                    type: FileType.image,
+                  );
+                  if (result.isEmpty ||
+                      result.single.path == null ||
+                      !context.mounted)
+                    return;
+                  setState(() {
+                    project.layout['overviewWallpaper'] = result.single.path;
+                    project.layout.remove('overviewWallpaperAsset');
+                  });
+                  saveLayout();
+                  if (context.mounted) Navigator.pop(context);
+                },
+              ),
+              if (project.layout['overviewWallpaper'] != null ||
+                  project.layout['overviewWallpaperAsset'] != null)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.restart_alt),
+                  title: const Text('Restore default illustration'),
+                  onTap: () {
+                    setState(() {
+                      project.layout.remove('overviewWallpaper');
+                      project.layout.remove('overviewWallpaperAsset');
+                    });
+                    saveLayout();
+                    Navigator.pop(context);
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget navigation(bool compact) => Container(
     width: compact ? 72 : 215,
     decoration: BoxDecoration(
@@ -1354,6 +1583,73 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
             ],
           ),
         ),
+        // ── Resource folder tree: capped at one quarter of the dock height. ──
+        if (!compact && resourceFolders.isNotEmpty)
+          SizedBox(
+            height: resourceTreeCollapsed
+                ? 37
+                : MediaQuery.sizeOf(context).height * .25,
+            child: Container(
+              margin: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+              padding: const EdgeInsets.only(top: 2),
+              decoration: BoxDecoration(
+                border: Border(top: BorderSide(color: line)),
+              ),
+              child: Column(
+                children: [
+                  InkWell(
+                    borderRadius: BorderRadius.circular(5),
+                    onTap: () {
+                      setState(
+                        () => resourceTreeCollapsed = !resourceTreeCollapsed,
+                      );
+                      saveLayout();
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(4, 5, 4, 5),
+                      child: Row(
+                        children: [
+                          Icon(
+                            resourceTreeCollapsed
+                                ? Icons.chevron_right
+                                : Icons.expand_more,
+                            size: 16,
+                            color: muted,
+                          ),
+                          Icon(
+                            Icons.folder_open_outlined,
+                            size: 11,
+                            color: muted,
+                          ),
+                          const SizedBox(width: 5),
+                          Text(
+                            'FOLDERS',
+                            style: TextStyle(
+                              fontSize: 9,
+                              letterSpacing: 1.2,
+                              color: muted,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (!resourceTreeCollapsed)
+                    Expanded(
+                      child: Scrollbar(
+                        child: ListView(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          children: [
+                            for (final folder in _foldersIn(null))
+                              _navigationFolderEntry(folder),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
         if (!compact)
           Padding(
             padding: const EdgeInsets.all(16),
@@ -1383,13 +1679,15 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
                     onTap: quickCapture,
                     child: const Row(
                       children: [
-                        Expanded(child: Text(
-                          'Quick capture',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
+                        Expanded(
+                          child: Text(
+                            'Quick capture',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
-                        )),
+                        ),
                         Icon(Icons.add, size: 15),
                       ],
                     ),
@@ -1399,16 +1697,34 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
             ),
           ),
         const Divider(height: 1),
-        Padding(padding: const EdgeInsets.all(10), child:
-          compact ? IconButton(tooltip: 'Settings & keyboard shortcuts',
-            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-            onPressed: settings, icon: const Icon(Icons.settings_outlined))
-          : Row(children: [
-            Expanded(child: TextButton.icon(onPressed: settings,
-              icon: const Icon(Icons.settings_outlined, size: 18),
-              label: const Text('Settings', overflow: TextOverflow.ellipsis))),
-            const Tag('LOCAL'),
-          ])),
+        Padding(
+          padding: const EdgeInsets.all(10),
+          child: compact
+              ? IconButton(
+                  tooltip: 'Settings & keyboard shortcuts',
+                  constraints: const BoxConstraints(
+                    minWidth: 40,
+                    minHeight: 40,
+                  ),
+                  onPressed: settings,
+                  icon: const Icon(Icons.settings_outlined),
+                )
+              : Row(
+                  children: [
+                    Expanded(
+                      child: TextButton.icon(
+                        onPressed: settings,
+                        icon: const Icon(Icons.settings_outlined, size: 18),
+                        label: const Text(
+                          'Settings',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ),
+                    const Tag('LOCAL'),
+                  ],
+                ),
+        ),
       ],
     ),
   );
@@ -1706,10 +2022,68 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
               ),
               child: Stack(
                 children: [
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: () {
+                        final customPath =
+                            project.layout['overviewWallpaper'] as String?;
+                        final illustration =
+                            project.layout['overviewWallpaperAsset']
+                                as String? ??
+                            dashboardWallpapers.first;
+                        if (customPath != null && customPath.isNotEmpty) {
+                          return Image.file(
+                            File(customPath),
+                            fit: BoxFit.cover,
+                            alignment: Alignment.centerRight,
+                            errorBuilder: (_, _, _) => Image.asset(
+                              illustration,
+                              fit: BoxFit.cover,
+                              alignment: Alignment.centerRight,
+                            ),
+                          );
+                        }
+                        return Image.asset(
+                          illustration,
+                          fit: BoxFit.cover,
+                          alignment: Alignment.centerRight,
+                          errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                        );
+                      }(),
+                    ),
+                  ),
+                  Positioned(
+                    right: 8,
+                    top: 8,
+                    child: IconButton(
+                      icon: const Icon(Icons.wallpaper, size: 18),
+                      tooltip: 'Change dashboard illustration',
+                      onPressed: _chooseOverviewWallpaper,
+                    ),
+                  ),
+                  const Positioned.fill(
+                    child: IgnorePointer(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.centerLeft,
+                            end: Alignment.centerRight,
+                            colors: [
+                              Color(0xF2E4ECD9),
+                              Color(0xD8E4ECD9),
+                              Color(0x28E4ECD9),
+                              Color(0x00E4ECD9),
+                            ],
+                            stops: [0, .40, .70, 1],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                   Positioned(
                     left: 27,
                     top: 26,
-                    right: 27,
+                    right: MediaQuery.sizeOf(context).width < 760 ? 120 : 340,
                     bottom: 22,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1755,6 +2129,20 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
                           ),
                         ),
                       ],
+                    ),
+                  ),
+                  Positioned(
+                    right: 18,
+                    top: 18,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(13),
+                      child: Image.asset(
+                        'assets/illustrations/dashboard_courses.jpg',
+                        width: 78,
+                        height: 78,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                      ),
                     ),
                   ),
                 ],
@@ -2283,7 +2671,7 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
                 showDock = true;
               });
             },
-            onExport: () => run(() => exportText(current)),
+            onExport: () => run(() => exportPdf(current)),
             onAskAi: (req) {
               lastSelection = req;
               setState(() {
@@ -2326,6 +2714,818 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
                   )),
         )
         .toList();
+  }
+
+  List<Map<String, String>> get resourceFolders =>
+      (project.layout['resourceFolders'] as List? ?? [])
+          .whereType<Map>()
+          .map(
+            (raw) => {
+              'id': raw['id']?.toString() ?? '',
+              'name': raw['name']?.toString() ?? 'Untitled folder',
+              'parentId': raw['parentId']?.toString() ?? '',
+            },
+          )
+          .where((folder) => folder['id']!.isNotEmpty)
+          .toList();
+
+  List<CreativeObject> _orderedResources(Iterable<CreativeObject> assets) {
+    final order = List<String>.from(
+      project.layout['resourceOrder'] as List? ?? [],
+    );
+    final index = <String, int>{
+      for (var i = 0; i < order.length; i++) order[i]: i,
+    };
+    final result = assets.toList();
+    result.sort(
+      (a, b) => (index[a.id] ?? (1 << 30)).compareTo(index[b.id] ?? (1 << 30)),
+    );
+    return result;
+  }
+
+  Future<void> _createResourceFolder() async {
+    final name = await askText(
+      context,
+      'New resource folder',
+      hint: 'e.g. Week 3 lectures',
+    );
+    if (name == null || name.trim().isEmpty) return;
+    final folders = List<Map<String, dynamic>>.from(
+      project.layout['resourceFolders'] as List? ?? [],
+    );
+    final id = 'folder-${newId()}';
+    folders.add({
+      'id': id,
+      'name': name.trim(),
+      // Creating a folder while browsing one makes it a child of that folder.
+      'parentId': selectedResourceFolder == 'all'
+          ? null
+          : selectedResourceFolder,
+    });
+    setState(() => selectedResourceFolder = id);
+    project.layout['resourceFolders'] = folders;
+    store.changed();
+  }
+
+  void _moveResourceToFolder(CreativeObject resource, String folderId) {
+    resource.meta['folderId'] = folderId == 'root' ? null : folderId;
+    store.changed();
+    setState(() {});
+  }
+
+  List<Map<String, String>> _foldersIn(String? parentId) => resourceFolders
+      .where((folder) => (folder['parentId'] ?? '') == (parentId ?? ''))
+      .toList();
+
+  bool _folderIsInside(String folderId, String possibleAncestorId) {
+    var parentId = resourceFolders
+        .where((folder) => folder['id'] == folderId)
+        .map((folder) => folder['parentId'])
+        .firstOrNull;
+    final visited = <String>{};
+    while (parentId != null && parentId.isNotEmpty && visited.add(parentId)) {
+      if (parentId == possibleAncestorId) return true;
+      parentId = resourceFolders
+          .where((folder) => folder['id'] == parentId)
+          .map((folder) => folder['parentId'])
+          .firstOrNull;
+    }
+    return false;
+  }
+
+  void _moveFolderToFolder(Map<String, String> folder, String? parentId) {
+    final folderId = folder['id']!;
+    if (parentId == folderId ||
+        (parentId != null && _folderIsInside(parentId, folderId))) {
+      toast('A folder cannot be placed inside itself.');
+      return;
+    }
+    final folders = List<Map<String, dynamic>>.from(
+      project.layout['resourceFolders'] as List? ?? [],
+    );
+    final index = folders.indexWhere(
+      (item) => item['id']?.toString() == folderId,
+    );
+    if (index < 0) return;
+    folders[index] = {...folders[index], 'parentId': parentId};
+    project.layout['resourceFolders'] = folders;
+    store.changed();
+    setState(() {});
+  }
+
+  Future<void> _deleteResourceFolder(Map<String, String> folder) async {
+    final directFiles = project
+        .of('asset')
+        .where((asset) => asset.meta['folderId'] == folder['id'])
+        .length;
+    final childFolders = _foldersIn(folder['id']).length;
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete “${folder['name']}”?'),
+        content: Text(
+          'The folder will be removed. Its $directFiles direct resource${directFiles == 1 ? '' : 's'} and $childFolders subfolder${childFolders == 1 ? '' : 's'} will move up one level; no files will be deleted.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete folder'),
+          ),
+        ],
+      ),
+    );
+    if (yes != true) return;
+    final parentId = folder['parentId'];
+    for (final asset in project.of('asset')) {
+      if (asset.meta['folderId'] == folder['id']) {
+        asset.meta['folderId'] = parentId?.isEmpty ?? true ? null : parentId;
+      }
+    }
+    final folders = List<Map<String, dynamic>>.from(
+      project.layout['resourceFolders'] as List? ?? [],
+    );
+    for (var index = 0; index < folders.length; index++) {
+      if (folders[index]['parentId']?.toString() == folder['id']) {
+        folders[index] = {
+          ...folders[index],
+          'parentId': parentId?.isEmpty ?? true ? null : parentId,
+        };
+      }
+    }
+    folders.removeWhere((item) => item['id']?.toString() == folder['id']);
+    project.layout['resourceFolders'] = folders;
+    if (selectedResourceFolder == folder['id']) {
+      selectedResourceFolder = parentId?.isEmpty ?? true ? 'all' : parentId!;
+    }
+    store.changed();
+    if (mounted) setState(() {});
+    toast('Deleted folder “${folder['name']}”');
+  }
+
+  List<Map<String, String>> _folderPath(String folderId) {
+    final path = <Map<String, String>>[];
+    var currentId = folderId;
+    final visited = <String>{};
+    while (currentId.isNotEmpty && visited.add(currentId)) {
+      final folder = resourceFolders
+          .where((candidate) => candidate['id'] == currentId)
+          .firstOrNull;
+      if (folder == null) break;
+      path.insert(0, folder);
+      currentId = folder['parentId'] ?? '';
+    }
+    return path;
+  }
+
+  void _reorderResources(
+    List<CreativeObject> visible,
+    int oldIndex,
+    int newIndex,
+  ) {
+    if (newIndex > oldIndex) newIndex--;
+    final reordered = List<CreativeObject>.from(visible);
+    final item = reordered.removeAt(oldIndex);
+    reordered.insert(newIndex, item);
+    final order = List<String>.from(
+      project.layout['resourceOrder'] as List? ?? [],
+    );
+    order.removeWhere((id) => visible.any((asset) => asset.id == id));
+    order.addAll(reordered.map((asset) => asset.id));
+    project.layout['resourceOrder'] = order;
+    store.changed();
+    setState(() {});
+  }
+
+  Widget resourceLibrary(List<CreativeObject> assets) {
+    if (selectedResourceFolder != 'all' &&
+        !resourceFolders.any(
+          (folder) => folder['id'] == selectedResourceFolder,
+        )) {
+      selectedResourceFolder = 'all';
+    }
+    final currentFolderId = selectedResourceFolder == 'all'
+        ? null
+        : selectedResourceFolder;
+    final folders = _foldersIn(currentFolderId);
+    final showFolderTiles = folders.isNotEmpty;
+    final visible = _orderedResources(
+      assets.where(
+        (asset) => currentFolderId == null
+            ? asset.meta['folderId'] == null
+            : asset.meta['folderId'] == currentFolderId,
+      ),
+    );
+    final path = currentFolderId == null
+        ? const <Map<String, String>>[]
+        : _folderPath(currentFolderId);
+    return Column(
+      children: [
+        // ─── Breadcrumb address bar ──────────────────────────────────────────
+        DragTarget<Object>(
+          onWillAcceptWithDetails: (details) {
+            final item = details.data;
+            if (item is CreativeObject)
+              return item.kind == 'asset' && item.meta['folderId'] != null;
+            if (item is Map<String, String>)
+              return (item['parentId'] ?? '').isNotEmpty;
+            return false;
+          },
+          onAcceptWithDetails: (details) {
+            final item = details.data;
+            if (item is CreativeObject) {
+              _moveResourceToFolder(item, 'root');
+              toast('Moved "${item.title}" to Learning Resources');
+            } else if (item is Map<String, String>) {
+              _moveFolderToFolder(item, null);
+              toast('Moved "${item['name']}" to Learning Resources');
+            }
+          },
+          builder: (context, candidates, rejected) => Container(
+            margin: const EdgeInsets.fromLTRB(30, 0, 30, 8),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: candidates.isEmpty ? paper : paleSage,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: candidates.isEmpty ? line : sage,
+                width: candidates.isEmpty ? 1 : 2,
+              ),
+            ),
+            child: Row(
+              children: [
+                // Back button (only inside a folder)
+                if (path.isNotEmpty) ...[
+                  InkWell(
+                    borderRadius: BorderRadius.circular(6),
+                    onTap: () => setState(
+                      () => selectedResourceFolder = path.length == 1
+                          ? 'all'
+                          : path[path.length - 2]['id']!,
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(2),
+                      child: Icon(
+                        Icons.arrow_back_ios_rounded,
+                        size: 13,
+                        color: muted,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                ],
+                // Root crumb — the root shows only items that actually live there.
+                InkWell(
+                  borderRadius: BorderRadius.circular(4),
+                  onTap: path.isNotEmpty
+                      ? () => setState(() => selectedResourceFolder = 'all')
+                      : null,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.folder_open_outlined,
+                        size: 14,
+                        color: path.isNotEmpty ? muted : ink,
+                      ),
+                      const SizedBox(width: 5),
+                      Text(
+                        'Learning Resources',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: path.isEmpty
+                              ? FontWeight.w600
+                              : FontWeight.normal,
+                          color: path.isNotEmpty ? muted : ink,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                for (final folder in path) ...[
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    child: Icon(Icons.chevron_right, size: 14, color: muted),
+                  ),
+                  InkWell(
+                    onTap: () =>
+                        setState(() => selectedResourceFolder = folder['id']!),
+                    child: Text(
+                      folder['name']!,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: folder == path.last
+                            ? FontWeight.w600
+                            : FontWeight.normal,
+                        color: folder == path.last ? ink : muted,
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 1,
+                  ),
+                  decoration: BoxDecoration(
+                    color: paleSage,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    '${visible.length}',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: ink,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const Spacer(),
+              ],
+            ),
+          ),
+        ),
+        // ─── Toolbar row (view toggle + new folder) ──────────────────────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(30, 0, 30, 10),
+          child: Row(
+            children: [
+              const Spacer(),
+              SegmentedButton<bool>(
+                showSelectedIcon: false,
+                segments: const [
+                  ButtonSegment(
+                    value: false,
+                    icon: Icon(Icons.view_agenda_outlined, size: 15),
+                    tooltip: 'List view',
+                  ),
+                  ButtonSegment(
+                    value: true,
+                    icon: Icon(Icons.grid_view_rounded, size: 15),
+                    tooltip: 'Grid view',
+                  ),
+                ],
+                selected: {resourceGridView},
+                onSelectionChanged: (selection) {
+                  setState(() => resourceGridView = selection.first);
+                  saveLayout();
+                },
+                style: const ButtonStyle(visualDensity: VisualDensity.compact),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                onPressed: _createResourceFolder,
+                icon: const Icon(Icons.create_new_folder_outlined, size: 16),
+                label: const Text('Folder'),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: visible.isEmpty && (!showFolderTiles || folders.isEmpty)
+              ? EmptyState(
+                  Icons.folder_open_outlined,
+                  'This folder is ready.',
+                  'Import a resource or move one here from the resource menu.',
+                )
+              : resourceGridView
+              ? GridView.builder(
+                  padding: const EdgeInsets.fromLTRB(30, 6, 30, 30),
+                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: 250,
+                    mainAxisExtent: 216,
+                    crossAxisSpacing: 14,
+                    mainAxisSpacing: 14,
+                  ),
+                  itemCount:
+                      visible.length + (showFolderTiles ? folders.length : 0),
+                  itemBuilder: (context, index) {
+                    if (showFolderTiles && index < folders.length) {
+                      return _resourceFolderCard(
+                        folders[index],
+                        assets,
+                        grid: true,
+                      );
+                    }
+                    return _resourceCard(
+                      visible[index - (showFolderTiles ? folders.length : 0)],
+                      resourceFolders,
+                      grid: true,
+                    );
+                  },
+                )
+              : showFolderTiles
+              ? ListView(
+                  padding: const EdgeInsets.fromLTRB(30, 6, 30, 30),
+                  children: [
+                    for (final folder in folders)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _resourceFolderCard(folder, assets),
+                      ),
+                    for (final resource in visible)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _resourceCard(resource, resourceFolders),
+                      ),
+                  ],
+                )
+              : ReorderableListView.builder(
+                  padding: const EdgeInsets.fromLTRB(30, 6, 30, 30),
+                  buildDefaultDragHandles: false,
+                  itemCount: visible.length,
+                  onReorder: (oldIndex, newIndex) =>
+                      _reorderResources(visible, oldIndex, newIndex),
+                  itemBuilder: (context, index) => Padding(
+                    key: ValueKey(visible[index].id),
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: _resourceCard(
+                      visible[index],
+                      resourceFolders,
+                      dragIndex: index,
+                    ),
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _resourceFolderCard(
+    Map<String, String> folder,
+    List<CreativeObject> assets, {
+    bool grid = false,
+  }) {
+    final itemCount = assets
+        .where((asset) => asset.meta['folderId'] == folder['id'])
+        .length;
+    final organizer = PopupMenuButton<String>(
+      tooltip: 'Folder options',
+      onSelected: (action) {
+        if (action == 'delete') _deleteResourceFolder(folder);
+      },
+      itemBuilder: (_) => const [
+        PopupMenuItem(
+          value: 'delete',
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline, size: 17),
+              SizedBox(width: 8),
+              Text('Delete folder'),
+            ],
+          ),
+        ),
+      ],
+      icon: const Icon(Icons.more_horiz, size: 18),
+    );
+    final card = DragTarget<Object>(
+      onWillAcceptWithDetails: (d) {
+        final item = d.data;
+        if (item is CreativeObject) {
+          return item.kind == 'asset' && item.meta['folderId'] != folder['id'];
+        }
+        if (item is Map<String, String>) {
+          final folderId = item['id'];
+          return folderId != null &&
+              folderId != folder['id'] &&
+              !_folderIsInside(folder['id']!, folderId);
+        }
+        return false;
+      },
+      onAcceptWithDetails: (d) {
+        if (d.data is CreativeObject) {
+          final resource = d.data as CreativeObject;
+          _moveResourceToFolder(resource, folder['id']!);
+          toast('Moved "${resource.title}" to ${folder['name']}');
+        } else if (d.data is Map<String, String>) {
+          final moving = d.data as Map<String, String>;
+          _moveFolderToFolder(moving, folder['id']);
+          toast('Moved "${moving['name']}" to ${folder['name']}');
+        }
+      },
+      builder: (context, candidates, rejected) {
+        final isHovered = candidates.isNotEmpty;
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: isHovered ? gold : Colors.transparent,
+              width: 2,
+            ),
+          ),
+          child: Material(
+            color: isHovered ? gold.withValues(alpha: .08) : paper,
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () {
+                navigate('Media library');
+                setState(() => selectedResourceFolder = folder['id']!);
+              },
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: isHovered ? Colors.transparent : line,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: grid
+                    ? Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.folder_rounded,
+                            size: 58,
+                            color: isHovered ? gold : gold,
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  folder['name']!,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                              organizer,
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '$itemCount ${itemCount == 1 ? 'resource' : 'resources'}',
+                            style: TextStyle(fontSize: 11, color: muted),
+                          ),
+                          if (isHovered)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 6),
+                              child: Text(
+                                'Drop to add',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: gold,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                        ],
+                      )
+                    : Row(
+                        children: [
+                          Container(
+                            width: 64,
+                            height: 58,
+                            decoration: BoxDecoration(
+                              color: gold.withValues(alpha: .14),
+                              borderRadius: BorderRadius.circular(9),
+                            ),
+                            child: Icon(
+                              Icons.folder_rounded,
+                              color: gold,
+                              size: 34,
+                            ),
+                          ),
+                          const SizedBox(width: 13),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  folder['name']!,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 5),
+                                Text(
+                                  isHovered
+                                      ? 'Drop to add here'
+                                      : '$itemCount ${itemCount == 1 ? 'resource' : 'resources'}',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: isHovered ? gold : muted,
+                                    fontWeight: isHovered
+                                        ? FontWeight.w600
+                                        : FontWeight.normal,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          organizer,
+                          Icon(
+                            isHovered
+                                ? Icons.arrow_downward_rounded
+                                : Icons.chevron_right,
+                            color: isHovered ? gold : muted,
+                          ),
+                        ],
+                      ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+    return Draggable<Map<String, String>>(
+      data: folder,
+      feedback: Material(
+        color: paper,
+        elevation: 6,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.folder_rounded, color: gold, size: 18),
+              const SizedBox(width: 8),
+              Text(folder['name']!, style: const TextStyle(fontSize: 13)),
+            ],
+          ),
+        ),
+      ),
+      childWhenDragging: Opacity(opacity: .45, child: card),
+      child: card,
+    );
+  }
+
+  Widget _resourceCard(
+    CreativeObject resource,
+    List<Map<String, String>> folders, {
+    bool grid = false,
+    int? dragIndex,
+  }) {
+    final folderName = folders
+        .where((folder) => folder['id'] == resource.meta['folderId'])
+        .map((folder) => folder['name'])
+        .firstOrNull;
+    final organizer = PopupMenuButton<String>(
+      tooltip: 'Organize resource',
+      onSelected: (folder) {
+        if (folder == 'delete') {
+          remove(resource);
+        } else {
+          _moveResourceToFolder(resource, folder);
+        }
+      },
+      itemBuilder: (_) => [
+        const PopupMenuItem(value: 'root', child: Text('Remove from folder')),
+        const PopupMenuDivider(),
+        for (final folder in folders)
+          PopupMenuItem(
+            value: folder['id'],
+            child: Text('Move to ${folder['name']}'),
+          ),
+        const PopupMenuDivider(),
+        const PopupMenuItem(
+          value: 'delete',
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline, size: 17),
+              SizedBox(width: 8),
+              Text('Delete resource'),
+            ],
+          ),
+        ),
+      ],
+      icon: const Icon(Icons.drive_file_move_outline, size: 19),
+    );
+    final card = Material(
+      color: paper,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => preview(resource),
+        child: Container(
+          padding: const EdgeInsets.all(9),
+          decoration: BoxDecoration(
+            border: Border.all(color: line),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: grid
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: AssetThumbnail(store: store, asset: resource),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 9),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            resource.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                        organizer,
+                      ],
+                    ),
+                    Text(
+                      '${resource.meta['mediaType'] ?? 'file'}${folderName == null ? '' : ' · $folderName'}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 10, color: muted),
+                    ),
+                  ],
+                )
+              : SizedBox(
+                  height: 66,
+                  child: Row(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: SizedBox(
+                          width: 104,
+                          height: double.infinity,
+                          child: AssetThumbnail(store: store, asset: resource),
+                        ),
+                      ),
+                      const SizedBox(width: 13),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              resource.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 5),
+                            Text(
+                              '${resource.meta['mediaType'] ?? 'file'}${folderName == null ? '' : ' · $folderName'}',
+                              style: TextStyle(fontSize: 11, color: muted),
+                            ),
+                          ],
+                        ),
+                      ),
+                      organizer,
+                      if (dragIndex != null)
+                        ReorderableDragStartListener(
+                          index: dragIndex,
+                          child: Icon(Icons.drag_indicator, color: muted),
+                        ),
+                    ],
+                  ),
+                ),
+        ),
+      ),
+    );
+    // Wrap in Draggable so the card can be dragged onto a folder DragTarget
+    return Draggable<CreativeObject>(
+      data: resource,
+      feedback: Material(
+        elevation: 6,
+        borderRadius: BorderRadius.circular(10),
+        color: paper,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.insert_drive_file_outlined, size: 16, color: muted),
+              const SizedBox(width: 8),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 180),
+                child: Text(
+                  resource.title,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      childWhenDragging: Opacity(opacity: .45, child: card),
+      child: card,
+    );
   }
 
   Widget collection([String? requestedMode]) {
@@ -2412,7 +3612,9 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
           ),
         ),
         Expanded(
-          child: objects.isEmpty
+          child: media
+              ? resourceLibrary(objects)
+              : objects.isEmpty
               ? EmptyState(
                   media ? Icons.photo_library_outlined : Icons.notes_outlined,
                   filter.isEmpty
@@ -2456,6 +3658,10 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
             setState(() => selectedId = o.id);
             if (media) {
               preview(o);
+            } else if (mode == 'Concept Bank / Glossary' ||
+                mode == 'Concept Bank' ||
+                mode == 'Story bible') {
+              openFloatingVideo(o);
             } else {
               edit(o);
             }
@@ -2468,11 +3674,25 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
             });
           },
           borderRadius: BorderRadius.circular(8),
-          child: Container(
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
             clipBehavior: Clip.antiAlias,
             decoration: BoxDecoration(
-              border: Border.all(color: selectedId == o.id ? sage : line),
+              border: Border.all(
+                color: selectedId == o.id ? sage : line,
+                width: selectedId == o.id ? 1.7 : 1,
+              ),
               borderRadius: BorderRadius.circular(8),
+              boxShadow: selectedId == o.id
+                  ? [
+                      BoxShadow(
+                        color: sage.withValues(alpha: .12),
+                        blurRadius: 14,
+                        offset: const Offset(0, 5),
+                      ),
+                    ]
+                  : null,
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -3594,69 +4814,83 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
     );
   }
 
-  Widget dockAssets() => Column(
-    children: [
-      Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          children: [
-            const Expanded(
-              child: Text(
-                'Project assets',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+  Widget dockAssets() {
+    final folders = _foldersIn(null);
+    final rootAssets = project
+        .of('asset')
+        .where((asset) => asset.meta['folderId'] == null)
+        .toList();
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Project assets',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                ),
               ),
-            ),
-            IconButton(
-              tooltip: 'Import files',
-              onPressed: () => run(importFiles),
-              icon: const Icon(Icons.add, size: 17),
-            ),
-          ],
+              IconButton(
+                tooltip: 'Import files',
+                onPressed: () => run(importFiles),
+                icon: const Icon(Icons.add, size: 17),
+              ),
+            ],
+          ),
         ),
-      ),
-      Expanded(
-        child: project.of('asset').isEmpty
-            ? const EmptyState(
-                Icons.photo_outlined,
-                'Gather your references',
-                'Import diagrams, lectures, or audio. Connect them to lesson segments, concept maps, or notes.',
-              )
-            : GridView.count(
-                crossAxisCount: 2,
-                childAspectRatio: 1,
-                padding: const EdgeInsets.all(12),
-                crossAxisSpacing: 8,
-                mainAxisSpacing: 8,
-                children: [
-                  for (final o in project.of('asset'))
-                    drag(
-                      o,
-                      InkWell(
-                        onTap: () => preview(o),
-                        child: Column(
-                          children: [
-                            Expanded(
-                              child: SizedBox(
-                                width: double.infinity,
-                                child: AssetThumbnail(store: store, asset: o),
+        Expanded(
+          child: rootAssets.isEmpty && folders.isEmpty
+              ? const EmptyState(
+                  Icons.photo_outlined,
+                  'Gather your references',
+                  'Import diagrams, lectures, or audio. Connect them to lesson segments, concept maps, or notes.',
+                )
+              : GridView.count(
+                  crossAxisCount: 2,
+                  childAspectRatio: 1,
+                  padding: const EdgeInsets.all(12),
+                  crossAxisSpacing: 8,
+                  mainAxisSpacing: 8,
+                  children: [
+                    for (final folder in folders)
+                      _resourceFolderCard(
+                        folder,
+                        project.of('asset').toList(),
+                        grid: true,
+                      ),
+                    for (final o in rootAssets)
+                      drag(
+                        o,
+                        InkWell(
+                          onTap: () => preview(o),
+                          child: Column(
+                            children: [
+                              Expanded(
+                                child: SizedBox(
+                                  width: double.infinity,
+                                  child: AssetThumbnail(store: store, asset: o),
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 5),
-                            Text(
-                              o.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 9),
-                            ),
-                          ],
+                              const SizedBox(height: 5),
+                              Text(
+                                o.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 9),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                ],
-              ),
-      ),
-    ],
-  );
+                  ],
+                ),
+        ),
+      ],
+    );
+  }
+
   Widget versions() {
     final o = selected;
     final versions = List<dynamic>.from(o?.meta['versions'] ?? []);
@@ -4240,7 +5474,7 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
           'Quick capture & brainstorms',
           'Scratchpad',
           subtitle:
-              'Click any note to expand and edit in place · Other notes shift automatically',
+              'Click any note to edit it in a movable floating window while you keep working.',
           actions: [
             SegmentedButton<bool>(
               showSelectedIcon: false,
@@ -4299,9 +5533,9 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
                 );
                 store.add(newNote);
                 setState(() {
-                  expandedScratchpadId = newNote.id;
                   selectedId = newNote.id;
                 });
+                openFloatingVideo(newNote);
                 toast('Created new scratchpad note');
               },
               icon: const Icon(Icons.add, size: 16),
@@ -4536,10 +5770,8 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
                           : InkWell(
                               borderRadius: BorderRadius.circular(10),
                               onTap: () {
-                                setState(() {
-                                  expandedScratchpadId = note.id;
-                                  selectedId = note.id;
-                                });
+                                setState(() => selectedId = note.id);
+                                openFloatingVideo(note);
                               },
                               child: Padding(
                                 padding: const EdgeInsets.all(16),
@@ -4600,7 +5832,10 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
     borderRadius: BorderRadius.circular(10),
     child: InkWell(
       borderRadius: BorderRadius.circular(10),
-      onTap: () => setState(() => selectedId = note.id),
+      onTap: () {
+        setState(() => selectedId = note.id);
+        openFloatingVideo(note);
+      },
       child: Container(
         padding: const EdgeInsets.fromLTRB(16, 12, 12, 14),
         decoration: BoxDecoration(
@@ -4623,11 +5858,11 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
                 ),
                 const Spacer(),
                 IconButton(
-                  tooltip: 'Edit note',
+                  tooltip: 'Open floating note',
                   iconSize: 16,
                   visualDensity: VisualDensity.compact,
-                  onPressed: () => edit(note),
-                  icon: const Icon(Icons.edit_outlined),
+                  onPressed: () => openFloatingVideo(note),
+                  icon: const Icon(Icons.picture_in_picture_alt_outlined),
                 ),
                 IconButton(
                   tooltip: 'Delete note',

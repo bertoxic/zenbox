@@ -50,6 +50,8 @@ class _ResearchBrowserViewState extends State<ResearchBrowserView> {
   String _selectionTitle = '';
   String _noteQuery = '';
   bool _restoring = true;
+  final List<Map<String, String>> _tabs = [];
+  int _activeTab = 0;
 
   final List<Map<String, String>> bookmarks = [
     {'name': 'DuckDuckGo', 'url': 'https://duckduckgo.com'},
@@ -63,10 +65,83 @@ class _ResearchBrowserViewState extends State<ResearchBrowserView> {
   void initState() {
     super.initState();
     _state = ResearchState(widget.store.project);
-    _urlController.text = _state.url;
-    _pageTitle = _state.title;
+    final savedTabs = (_state.data['tabs'] as List? ?? [])
+        .whereType<Map>()
+        .map(
+          (tab) => {
+            'url': tab['url']?.toString() ?? '',
+            'title': tab['title']?.toString() ?? '',
+          },
+        )
+        .where((tab) => tab['url']!.isNotEmpty)
+        .toList();
+    _tabs.addAll(
+      savedTabs.isEmpty
+          ? [
+              {'url': _state.url, 'title': _state.title},
+            ]
+          : savedTabs,
+    );
+    _activeTab = ((_state.data['activeTab'] as num?)?.toInt() ?? 0).clamp(
+      0,
+      _tabs.length - 1,
+    );
+    _urlController.text = _tabs[_activeTab]['url']!;
+    _pageTitle = _tabs[_activeTab]['title']!;
     _showNotes = _state.data['showNotes'] != false;
     _initBrowser();
+  }
+
+  void _saveTabs() {
+    _state.data['tabs'] = _tabs
+        .map((tab) => Map<String, String>.from(tab))
+        .toList();
+    _state.data['activeTab'] = _activeTab;
+    widget.store.changed();
+  }
+
+  void _newTab([String? url]) {
+    final destination = url ?? 'https://duckduckgo.com';
+    setState(() {
+      _tabs.add({'url': destination, 'title': ''});
+      _activeTab = _tabs.length - 1;
+      _urlController.text = destination;
+      _pageTitle = '';
+    });
+    _saveTabs();
+    _navigate(destination);
+  }
+
+  void _selectTab(int index) {
+    if (index == _activeTab || index < 0 || index >= _tabs.length) return;
+    setState(() {
+      _activeTab = index;
+      _urlController.text = _tabs[index]['url']!;
+      _pageTitle = _tabs[index]['title']!;
+      _selection = '';
+    });
+    _saveTabs();
+    if (_isInitialized) _controller.loadUrl(_urlController.text);
+  }
+
+  void _closeTab(int index) {
+    if (_tabs.length == 1) {
+      setState(() {
+        _tabs[0] = {'url': 'https://duckduckgo.com', 'title': ''};
+        _urlController.text = _tabs[0]['url']!;
+        _pageTitle = '';
+      });
+      _navigate(_urlController.text);
+      return;
+    }
+    setState(() {
+      _tabs.removeAt(index);
+      if (_activeTab >= _tabs.length) _activeTab = _tabs.length - 1;
+      _urlController.text = _tabs[_activeTab]['url']!;
+      _pageTitle = _tabs[_activeTab]['title']!;
+    });
+    _saveTabs();
+    if (_isInitialized) _controller.loadUrl(_urlController.text);
   }
 
   Future<void> _initBrowser() async {
@@ -82,14 +157,16 @@ class _ResearchBrowserViewState extends State<ResearchBrowserView> {
       if (!mounted) return;
       await _controller.initialize();
       if (!mounted) return;
-      final restoreUrl = _state.url;
+      final restoreUrl = _urlController.text;
       final restoreScroll = (_state.data['scrollY'] as num?)?.toDouble() ?? 0;
       _subscriptions.add(
         _controller.url.listen((url) {
           if (mounted && url.isNotEmpty) {
             _urlController.text = url;
+            _tabs[_activeTab]['url'] = url;
             _selection = '';
             _state.visit(url, '');
+            _saveTabs();
             widget.store.changed();
           }
         }),
@@ -98,7 +175,9 @@ class _ResearchBrowserViewState extends State<ResearchBrowserView> {
         _controller.title.listen((title) {
           if (mounted) {
             setState(() => _pageTitle = title);
+            _tabs[_activeTab]['title'] = title;
             _state.visit(_urlController.text, title);
+            _saveTabs();
             widget.store.changed();
           }
         }),
@@ -160,6 +239,9 @@ class _ResearchBrowserViewState extends State<ResearchBrowserView> {
     if (text.isEmpty) return;
     text = researchAddress(text);
     _urlController.text = text;
+    _tabs[_activeTab]['url'] = text;
+    _tabs[_activeTab]['title'] = '';
+    _saveTabs();
     if (_isInitialized) {
       _controller.loadUrl(text);
     }
@@ -190,7 +272,11 @@ class _ResearchBrowserViewState extends State<ResearchBrowserView> {
     );
     widget.store.add(o);
     if (mounted) {
-      TopNotification.show(context, 'Saved "${o.title}" to project research', icon: Icons.bookmark_added_outlined);
+      TopNotification.show(
+        context,
+        'Saved "${o.title}" to project research',
+        icon: Icons.bookmark_added_outlined,
+      );
     }
   }
 
@@ -218,7 +304,10 @@ class _ResearchBrowserViewState extends State<ResearchBrowserView> {
       }
     } else if (data is CreativeObject) {
       if (data.kind == 'research') return;
-      if (widget.store.project.objects.any((o) => o.id == data.id && o.kind == 'research')) return;
+      if (widget.store.project.objects.any(
+        (o) => o.id == data.id && o.kind == 'research',
+      ))
+        return;
       final note = CreativeObject(
         kind: 'research',
         title: 'Note: ${data.title}',
@@ -422,6 +511,88 @@ class _ResearchBrowserViewState extends State<ResearchBrowserView> {
                 ],
               ),
               const SizedBox(height: 8),
+              SizedBox(
+                height: 34,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: _tabs.length,
+                        separatorBuilder: (_, _) => const SizedBox(width: 5),
+                        itemBuilder: (context, index) {
+                          final tab = _tabs[index];
+                          final active = index == _activeTab;
+                          return InkWell(
+                            onTap: () => _selectTab(index),
+                            borderRadius: BorderRadius.circular(7),
+                            child: Container(
+                              constraints: const BoxConstraints(
+                                minWidth: 120,
+                                maxWidth: 210,
+                              ),
+                              padding: const EdgeInsets.only(
+                                left: 10,
+                                right: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: active
+                                    ? paleSage.withValues(alpha: .62)
+                                    : cream,
+                                border: Border.all(color: active ? sage : line),
+                                borderRadius: BorderRadius.circular(7),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    active
+                                        ? Icons.public
+                                        : Icons.public_outlined,
+                                    size: 13,
+                                    color: active ? sage : muted,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      (tab['title']?.trim().isNotEmpty ?? false)
+                                          ? tab['title']!
+                                          : 'New tab',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: active
+                                            ? FontWeight.w700
+                                            : FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                  IconButton(
+                                    tooltip: 'Close tab',
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(
+                                      minWidth: 25,
+                                      minHeight: 25,
+                                    ),
+                                    icon: const Icon(Icons.close, size: 14),
+                                    onPressed: () => _closeTab(index),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'New tab',
+                      onPressed: _newTab,
+                      icon: const Icon(Icons.add, size: 18),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 6),
               Row(
                 children: [
                   Text(
@@ -714,120 +885,138 @@ class _ResearchBrowserViewState extends State<ResearchBrowserView> {
                                                 onTap: () =>
                                                     widget.onOpenNote(note),
                                                 child: Padding(
-                                                  padding:
-                                                      const EdgeInsets.all(12),
+                                                  padding: const EdgeInsets.all(
+                                                    12,
+                                                  ),
                                                   child: Column(
                                                     crossAxisAlignment:
-                                                        CrossAxisAlignment.start,
+                                                        CrossAxisAlignment
+                                                            .start,
                                                     children: [
-                                                Row(
-                                                  children: [
-                                                    Expanded(
-                                                      child: Text(
-                                                        note.title,
-                                                        maxLines: 1,
+                                                      Row(
+                                                        children: [
+                                                          Expanded(
+                                                            child: Text(
+                                                              note.title,
+                                                              maxLines: 1,
+                                                              overflow:
+                                                                  TextOverflow
+                                                                      .ellipsis,
+                                                              style: const TextStyle(
+                                                                fontSize: 12,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w600,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                          Icon(
+                                                            Icons
+                                                                .drag_indicator,
+                                                            size: 12,
+                                                            color: muted,
+                                                          ),
+                                                          IconButton(
+                                                            tooltip:
+                                                                'Delete research note',
+                                                            iconSize: 15,
+                                                            padding:
+                                                                EdgeInsets.zero,
+                                                            constraints:
+                                                                const BoxConstraints(
+                                                                  minWidth: 24,
+                                                                  minHeight: 24,
+                                                                ),
+                                                            color: const Color(
+                                                              0xFFA54141,
+                                                            ),
+                                                            onPressed: () =>
+                                                                widget.store
+                                                                    .remove(
+                                                                      note,
+                                                                    ),
+                                                            icon: const Icon(
+                                                              Icons
+                                                                  .delete_outline,
+                                                            ),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                      if (url.isNotEmpty) ...[
+                                                        const SizedBox(
+                                                          height: 4,
+                                                        ),
+                                                        InkWell(
+                                                          onTap: () =>
+                                                              _navigate(url),
+                                                          child: Text(
+                                                            url,
+                                                            maxLines: 1,
+                                                            overflow:
+                                                                TextOverflow
+                                                                    .ellipsis,
+                                                            style: TextStyle(
+                                                              fontSize: 9,
+                                                              color: sage,
+                                                              decoration:
+                                                                  TextDecoration
+                                                                      .underline,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                      const SizedBox(height: 6),
+                                                      Text(
+                                                        note.body,
+                                                        maxLines: 3,
                                                         overflow: TextOverflow
                                                             .ellipsis,
-                                                        style: const TextStyle(
-                                                          fontSize: 12,
-                                                          fontWeight:
-                                                              FontWeight.w600,
-                                                        ),
-                                                      ),
-                                                    ),
-                                                    Icon(
-                                                      Icons.drag_indicator,
-                                                      size: 12,
-                                                      color: muted,
-                                                    ),
-                                                    IconButton(
-                                                      tooltip:
-                                                          'Delete research note',
-                                                      iconSize: 15,
-                                                      padding: EdgeInsets.zero,
-                                                      constraints:
-                                                          const BoxConstraints(
-                                                            minWidth: 24,
-                                                            minHeight: 24,
-                                                          ),
-                                                      color: const Color(
-                                                        0xFFA54141,
-                                                      ),
-                                                      onPressed: () => widget
-                                                          .store
-                                                          .remove(note),
-                                                      icon: const Icon(
-                                                        Icons.delete_outline,
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
-                                                if (url.isNotEmpty) ...[
-                                                  const SizedBox(height: 4),
-                                                  InkWell(
-                                                    onTap: () => _navigate(url),
-                                                    child: Text(
-                                                      url,
-                                                      maxLines: 1,
-                                                      overflow:
-                                                          TextOverflow.ellipsis,
-                                                      style: TextStyle(
-                                                        fontSize: 9,
-                                                        color: sage,
-                                                        decoration:
-                                                            TextDecoration
-                                                                .underline,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ],
-                                                const SizedBox(height: 6),
-                                                Text(
-                                                  note.body,
-                                                  maxLines: 3,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                  style: TextStyle(
-                                                    fontSize: 11,
-                                                    color: muted,
-                                                    height: 1.5,
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 6),
-                                                Row(
-                                                  mainAxisAlignment:
-                                                      MainAxisAlignment.end,
-                                                  children: [
-                                                    TextButton(
-                                                      style: TextButton.styleFrom(
-                                                        padding:
-                                                            const EdgeInsets.symmetric(
-                                                              horizontal: 6,
-                                                            ),
-                                                        minimumSize: const Size(
-                                                          0,
-                                                          20,
-                                                        ),
-                                                      ),
-                                                      onPressed: () => widget
-                                                          .onOpenNote(note),
-                                                      child: const Text(
-                                                        'Open',
                                                         style: TextStyle(
-                                                          fontSize: 10,
+                                                          fontSize: 11,
+                                                          color: muted,
+                                                          height: 1.5,
                                                         ),
                                                       ),
-                                                    ),
-                                                  ],
+                                                      const SizedBox(height: 6),
+                                                      Row(
+                                                        mainAxisAlignment:
+                                                            MainAxisAlignment
+                                                                .end,
+                                                        children: [
+                                                          TextButton(
+                                                            style: TextButton.styleFrom(
+                                                              padding:
+                                                                  const EdgeInsets.symmetric(
+                                                                    horizontal:
+                                                                        6,
+                                                                  ),
+                                                              minimumSize:
+                                                                  const Size(
+                                                                    0,
+                                                                    20,
+                                                                  ),
+                                                            ),
+                                                            onPressed: () =>
+                                                                widget
+                                                                    .onOpenNote(
+                                                                      note,
+                                                                    ),
+                                                            child: const Text(
+                                                              'Open',
+                                                              style: TextStyle(
+                                                                fontSize: 10,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    ],
+                                                  ),
                                                 ),
-                                              ],
+                                              ),
                                             ),
                                           ),
-                                        ),
-                                      ),
-                                      ),
-                                      )
-                                    ;
+                                        );
                                       },
                                     ),
                                   if (isHovering && researchNotes.isNotEmpty)

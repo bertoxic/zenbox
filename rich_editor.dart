@@ -11,6 +11,7 @@ import 'editor.dart' show askText;
 import 'model.dart';
 import 'theme.dart';
 import 'visual.dart';
+import 'markdown_view.dart';
 
 class DocumentEditor extends StatefulWidget {
   const DocumentEditor({
@@ -52,6 +53,7 @@ class _DocumentEditorState extends State<DocumentEditor> {
   bool syncing = false;
   double textSize = 15;
   double pageZoom = 1.0;
+  bool markdownPreview = false;
   TextSelection selection = const TextSelection.collapsed(offset: 0);
 
   bool get script => widget.object.kind == 'script';
@@ -148,6 +150,30 @@ class _DocumentEditorState extends State<DocumentEditor> {
     });
   }
 
+  /// Markdown preview normally reads the plain-text note body. Quill embeds do
+  /// not exist in that string, so turn image embeds into local Markdown image
+  /// links while preserving their original position in the note.
+  String markdownPreviewData() {
+    final output = StringBuffer();
+    for (final raw in controller.document.toDelta().toJson()) {
+      final insert = raw['insert'];
+      if (insert is String) {
+        output.write(insert);
+        continue;
+      }
+      if (insert is! Map) continue;
+      final embed = Map<String, dynamic>.from(insert);
+      final key = embed.isEmpty ? null : embed.keys.first;
+      if (key != 'studio-image') continue;
+      final data = _StudioImageEmbedData.parse(embed[key]);
+      final asset = widget.store.project.object(data.objectId);
+      if (asset == null) continue;
+      final path = widget.store.mediaPath(asset).replaceAll('\\', '/');
+      output.write('\n![${asset.title}]($path)\n');
+    }
+    return output.toString();
+  }
+
   @override
   void didUpdateWidget(DocumentEditor oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -210,11 +236,12 @@ class _DocumentEditorState extends State<DocumentEditor> {
               .clamp(0, controller.document.length - 1);
 
     if (object.kind == 'generation') {
+      final markdown = markdownToDelta(object.body);
       controller.replaceText(
         at,
         0,
-        '\n${object.body}\n',
-        TextSelection.collapsed(offset: at + object.body.length + 2),
+        markdown,
+        TextSelection.collapsed(offset: at + markdown.length),
       );
       return;
     }
@@ -770,417 +797,482 @@ class _DocumentEditorState extends State<DocumentEditor> {
     return OverlayPortal(
       controller: portal,
       overlayChildBuilder: selectionOverlay,
-      child: Column(
-        children: [
-          Container(
-            height: 46,
-            padding: const EdgeInsets.symmetric(horizontal: 18),
-            decoration: BoxDecoration(
-              border: Border(bottom: BorderSide(color: line)),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  script ? Icons.edit_note : Icons.auto_stories_outlined,
-                  size: 17,
-                  color: sage,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: widget.siblingDocuments.isEmpty
-                      ? Text(
-                          widget.object.title,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        )
-                      : PopupMenuButton<String>(
-                          tooltip: 'Switch document',
-                          onSelected: (id) {
-                            final matches = widget.siblingDocuments.where(
-                              (document) => document.id == id,
-                            );
-                            if (matches.isNotEmpty) {
-                              widget.onSwitchDocument?.call(matches.first);
-                            }
-                          },
-                          itemBuilder: (_) => widget.siblingDocuments
-                              .map(
-                                (document) => PopupMenuItem(
-                                  value: document.id,
-                                  child: Row(
-                                    children: [
-                                      if (document.id == widget.object.id)
-                                        Icon(Icons.check, size: 15, color: sage)
-                                      else
-                                        const SizedBox(width: 15),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: Text(
-                                          document.title,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final hasRoomForHeader =
+              !constraints.hasBoundedHeight || constraints.maxHeight >= 46;
+          final hasRoomForToolbar =
+              !constraints.hasBoundedHeight || constraints.maxHeight >= 126;
+          final hasRoomForFooter =
+              !constraints.hasBoundedHeight || constraints.maxHeight >= 78;
+          return Column(
+            children: [
+              if (hasRoomForHeader)
+                Container(
+                  height: 46,
+                  padding: const EdgeInsets.symmetric(horizontal: 18),
+                  decoration: BoxDecoration(
+                    border: Border(bottom: BorderSide(color: line)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        script ? Icons.edit_note : Icons.auto_stories_outlined,
+                        size: 17,
+                        color: sage,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: widget.siblingDocuments.isEmpty
+                            ? Text(
+                                widget.object.title,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
                                 ),
                               )
-                              .toList(),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  widget.object.title,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                            : PopupMenuButton<String>(
+                                tooltip: 'Switch document',
+                                onSelected: (id) {
+                                  final matches = widget.siblingDocuments.where(
+                                    (document) => document.id == id,
+                                  );
+                                  if (matches.isNotEmpty) {
+                                    widget.onSwitchDocument?.call(
+                                      matches.first,
+                                    );
+                                  }
+                                },
+                                itemBuilder: (_) => widget.siblingDocuments
+                                    .map(
+                                      (document) => PopupMenuItem(
+                                        value: document.id,
+                                        child: Row(
+                                          children: [
+                                            if (document.id == widget.object.id)
+                                              Icon(
+                                                Icons.check,
+                                                size: 15,
+                                                color: sage,
+                                              )
+                                            else
+                                              const SizedBox(width: 15),
+                                            const SizedBox(width: 8),
+                                            Expanded(
+                                              child: Text(
+                                                document.title,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    )
+                                    .toList(),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Flexible(
+                                      child: Text(
+                                        widget.object.title,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    const Icon(Icons.expand_more, size: 16),
+                                  ],
                                 ),
                               ),
-                              const SizedBox(width: 4),
-                              const Icon(Icons.expand_more, size: 16),
-                            ],
-                          ),
-                        ),
-                ),
-                if (widget.onNewDocument != null)
-                  IconButton(
-                    tooltip: script ? 'New topic / note' : 'New study unit',
-                    onPressed: widget.onNewDocument,
-                    icon: const Icon(Icons.add, size: 17),
-                  ),
-                IconButton(
-                  tooltip: 'Rename',
-                  onPressed: () async {
-                    final value = await askText(
-                      context,
-                      'Rename document',
-                      initial: widget.object.title,
-                    );
-                    if (value != null) {
-                      widget.object.title = value;
-                      widget.store.changed();
-                    }
-                  },
-                  icon: const Icon(Icons.edit_outlined, size: 16),
-                ),
-                IconButton(
-                  tooltip: 'Save note snapshot',
-                  onPressed: () => widget.store.snapshot(widget.object),
-                  icon: const Icon(Icons.history, size: 17),
-                ),
-                IconButton(
-                  tooltip: 'Export document',
-                  onPressed: widget.onExport,
-                  icon: const Icon(Icons.download_outlined, size: 17),
-                ),
-                IconButton(
-                  tooltip: 'Delete document',
-                  onPressed: () => widget.onDelete(),
-                  color: const Color(0xFFA54141),
-                  icon: const Icon(Icons.delete_outline, size: 17),
-                ),
-              ],
-            ),
-          ),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 9),
-            decoration: BoxDecoration(
-              color: paper,
-              border: Border(bottom: BorderSide(color: line)),
-            ),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: TextFieldTapRegion(
-                child: Row(
-                  children: [
-                    IconButton(
-                      tooltip: 'Undo',
-                      onPressed: controller.undo,
-                      icon: const Icon(Icons.undo, size: 17),
-                    ),
-                    IconButton(
-                      tooltip: 'Redo',
-                      onPressed: controller.redo,
-                      icon: const Icon(Icons.redo, size: 17),
-                    ),
-                    formatTools(),
-                    if (script)
-                      PopupMenuButton<String>(
-                        tooltip: 'Study elements',
-                        onSelected: insertText,
-                        itemBuilder: (_) => const [
-                          PopupMenuItem(
-                            value: '\n### Topic / Section Heading\n\n',
-                            child: Text('Topic / Section Heading'),
-                          ),
-                          PopupMenuItem(
-                            value: '\n> **Key Takeaway:** \n\n',
-                            child: Text('Key Takeaway / Summary Callout'),
-                          ),
-                          PopupMenuItem(
-                            value: '\n* **Term / Concept:** \n',
-                            child: Text('Definition / Concept Item'),
-                          ),
-                          PopupMenuItem(
-                            value:
-                                '\n---\n**Review Question / Checkpoint:** \n\n',
-                            child: Text('Review Question / Check'),
-                          ),
-                        ],
-                        icon: const Icon(Icons.playlist_add, size: 17),
                       ),
-                  ],
+                      if (widget.onNewDocument != null)
+                        IconButton(
+                          tooltip: script
+                              ? 'New topic / note'
+                              : 'New study unit',
+                          onPressed: widget.onNewDocument,
+                          icon: const Icon(Icons.add, size: 17),
+                        ),
+                      IconButton(
+                        tooltip: 'Rename',
+                        onPressed: () async {
+                          final value = await askText(
+                            context,
+                            'Rename document',
+                            initial: widget.object.title,
+                          );
+                          if (value != null) {
+                            widget.object.title = value;
+                            widget.store.changed();
+                          }
+                        },
+                        icon: const Icon(Icons.edit_outlined, size: 16),
+                      ),
+                      IconButton(
+                        tooltip: markdownPreview
+                            ? 'Edit markdown'
+                            : 'Preview markdown',
+                        onPressed: () =>
+                            setState(() => markdownPreview = !markdownPreview),
+                        icon: Icon(
+                          markdownPreview
+                              ? Icons.edit_outlined
+                              : Icons.preview_outlined,
+                          size: 17,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Save note snapshot',
+                        onPressed: () => widget.store.snapshot(widget.object),
+                        icon: const Icon(Icons.history, size: 17),
+                      ),
+                      IconButton(
+                        tooltip: 'Export note as PDF',
+                        onPressed: widget.onExport,
+                        icon: const Icon(Icons.download_outlined, size: 17),
+                      ),
+                      IconButton(
+                        tooltip: 'Delete document',
+                        onPressed: () => widget.onDelete(),
+                        color: const Color(0xFFA54141),
+                        icon: const Icon(Icons.delete_outline, size: 17),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ),
-          ),
-          Expanded(
-            child: DragTarget<CreativeObject>(
-              onWillAcceptWithDetails: (d) => d.data.id != widget.object.id,
-              onAcceptWithDetails: (d) => embed(d.data, position: d.offset),
-              builder: (context, candidates, rejected) => Container(
-                color: candidates.isEmpty
-                    ? cream
-                    : paleSage.withValues(alpha: .4),
-                child: Stack(
-                  children: [
-                    Positioned.fill(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
-                        child: Transform.scale(
-                          scale: pageZoom,
-                          alignment: Alignment.topCenter,
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: paper,
-                              border: Border.all(
-                                color: candidates.isEmpty ? line : sage,
-                                width: candidates.isEmpty ? 1 : 2,
-                              ),
-                              borderRadius: BorderRadius.circular(6),
+              if (hasRoomForToolbar)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 9),
+                  decoration: BoxDecoration(
+                    color: paper,
+                    border: Border(bottom: BorderSide(color: line)),
+                  ),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: TextFieldTapRegion(
+                      child: Row(
+                        children: [
+                          IconButton(
+                            tooltip: 'Undo',
+                            onPressed: controller.undo,
+                            icon: const Icon(Icons.undo, size: 17),
+                          ),
+                          IconButton(
+                            tooltip: 'Redo',
+                            onPressed: controller.redo,
+                            icon: const Icon(Icons.redo, size: 17),
+                          ),
+                          formatTools(),
+                          if (script)
+                            PopupMenuButton<String>(
+                              tooltip: 'Study elements',
+                              onSelected: insertText,
+                              itemBuilder: (_) => const [
+                                PopupMenuItem(
+                                  value: '\n### Topic / Section Heading\n\n',
+                                  child: Text('Topic / Section Heading'),
+                                ),
+                                PopupMenuItem(
+                                  value: '\n> **Key Takeaway:** \n\n',
+                                  child: Text('Key Takeaway / Summary Callout'),
+                                ),
+                                PopupMenuItem(
+                                  value: '\n* **Term / Concept:** \n',
+                                  child: Text('Definition / Concept Item'),
+                                ),
+                                PopupMenuItem(
+                                  value:
+                                      '\n---\n**Review Question / Checkpoint:** \n\n',
+                                  child: Text('Review Question / Check'),
+                                ),
+                              ],
+                              icon: const Icon(Icons.playlist_add, size: 17),
                             ),
-                            child: Stack(
-                              fit: StackFit.expand,
-                              children: [
-                                Listener(
-                                  onPointerDown: (_) => focus.requestFocus(),
-                                  onPointerUp: (_) => showSelectionPopup(),
-                                  child: CallbackShortcuts(
-                                    bindings: {
-                                      const SingleActivator(
-                                        LogicalKeyboardKey.keyV,
-                                        control: true,
-                                      ): pastePlainText,
-                                    },
-                                    child: q.QuillEditor(
-                                      controller: controller,
-                                      focusNode: focus,
-                                      scrollController: scroll,
-                                      config: q.QuillEditorConfig(
-                                        editorKey: editorKey,
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              Expanded(
+                child: DragTarget<CreativeObject>(
+                  onWillAcceptWithDetails: (d) => d.data.id != widget.object.id,
+                  onAcceptWithDetails: (d) => embed(d.data, position: d.offset),
+                  builder: (context, candidates, rejected) => Container(
+                    color: candidates.isEmpty
+                        ? cream
+                        : paleSage.withValues(alpha: .4),
+                    child: Stack(
+                      children: [
+                        Positioned.fill(
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+                            child: Transform.scale(
+                              scale: pageZoom,
+                              alignment: Alignment.topCenter,
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  color: paper,
+                                  border: Border.all(
+                                    color: candidates.isEmpty ? line : sage,
+                                    width: candidates.isEmpty ? 1 : 2,
+                                  ),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Stack(
+                                  fit: StackFit.expand,
+                                  children: [
+                                    if (markdownPreview)
+                                      SingleChildScrollView(
                                         padding: const EdgeInsets.symmetric(
                                           horizontal: 48,
                                           vertical: 40,
                                         ),
-                                        placeholder:
-                                            'Write, select text for interactive tools, or drop assets here…',
-                                        embedBuilders: [
-                                          StudioImageEmbedBuilder(
-                                            store: widget.store,
-                                            project: widget.store.project,
-                                            onPreview: widget.onPreview,
-                                          ),
-                                          StudioVideoEmbedBuilder(
-                                            store: widget.store,
-                                            project: widget.store.project,
-                                            onPreview: widget.onPreview,
-                                          ),
-                                          StudioEmbedBuilder(
-                                            store: widget.store,
-                                            project: widget.store.project,
-                                            onPreview: widget.onPreview,
-                                          ),
-                                        ],
-                                        customStyles: q.DefaultStyles(
-                                          paragraph: q.DefaultTextBlockStyle(
-                                            TextStyle(
-                                              fontFamily: script
-                                                  ? 'Courier New'
-                                                  : 'Georgia',
-                                              fontSize: textSize,
-                                              height: 1.75,
-                                              color: ink,
+                                        child: MarkdownView(
+                                          data: markdownPreviewData(),
+                                          selectable: true,
+                                        ),
+                                      )
+                                    else
+                                      Listener(
+                                        onPointerDown: (_) =>
+                                            focus.requestFocus(),
+                                        onPointerUp: (_) =>
+                                            showSelectionPopup(),
+                                        child: CallbackShortcuts(
+                                          bindings: {
+                                            const SingleActivator(
+                                              LogicalKeyboardKey.keyV,
+                                              control: true,
+                                            ): pastePlainText,
+                                          },
+                                          child: q.QuillEditor(
+                                            controller: controller,
+                                            focusNode: focus,
+                                            scrollController: scroll,
+                                            config: q.QuillEditorConfig(
+                                              editorKey: editorKey,
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 48,
+                                                    vertical: 40,
+                                                  ),
+                                              placeholder:
+                                                  'Write, select text for interactive tools, or drop assets here…',
+                                              embedBuilders: [
+                                                StudioImageEmbedBuilder(
+                                                  store: widget.store,
+                                                  project: widget.store.project,
+                                                  onPreview: widget.onPreview,
+                                                ),
+                                                StudioVideoEmbedBuilder(
+                                                  store: widget.store,
+                                                  project: widget.store.project,
+                                                  onPreview: widget.onPreview,
+                                                ),
+                                                StudioEmbedBuilder(
+                                                  store: widget.store,
+                                                  project: widget.store.project,
+                                                  onPreview: widget.onPreview,
+                                                ),
+                                              ],
+                                              customStyles: q.DefaultStyles(
+                                                paragraph:
+                                                    q.DefaultTextBlockStyle(
+                                                      TextStyle(
+                                                        fontFamily: script
+                                                            ? 'Courier New'
+                                                            : 'Georgia',
+                                                        fontSize: textSize,
+                                                        height: 1.75,
+                                                        color: ink,
+                                                      ),
+                                                      const q.HorizontalSpacing(
+                                                        0,
+                                                        0,
+                                                      ),
+                                                      const q.VerticalSpacing(
+                                                        0,
+                                                        0,
+                                                      ),
+                                                      const q.VerticalSpacing(
+                                                        0,
+                                                        0,
+                                                      ),
+                                                      null,
+                                                    ),
+                                              ),
+                                              contextMenuBuilder: (context, state) =>
+                                                  AdaptiveTextSelectionToolbar.buttonItems(
+                                                    anchors: state
+                                                        .contextMenuAnchors,
+                                                    buttonItems: state
+                                                        .contextMenuButtonItems,
+                                                  ),
                                             ),
-                                            const q.HorizontalSpacing(0, 0),
-                                            const q.VerticalSpacing(0, 0),
-                                            const q.VerticalSpacing(0, 0),
-                                            null,
                                           ),
                                         ),
-                                        contextMenuBuilder: (context, state) =>
-                                            AdaptiveTextSelectionToolbar.buttonItems(
-                                              anchors: state.contextMenuAnchors,
-                                              buttonItems:
-                                                  state.contextMenuButtonItems,
-                                            ),
                                       ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (candidates.isNotEmpty)
+                          Positioned(
+                            top: 14,
+                            right: 40,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: gold,
+                                borderRadius: BorderRadius.circular(6),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: ink.withValues(alpha: .15),
+                                    blurRadius: 10,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ],
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.download, size: 16, color: ink),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'DROP ASSET TO EMBED IN NOTE',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                      letterSpacing: 1.2,
+                                      color: ink,
                                     ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              if (hasRoomForFooter)
+                Container(
+                  height: 32,
+                  padding: const EdgeInsets.symmetric(horizontal: 22),
+                  decoration: BoxDecoration(
+                    color: paper,
+                    border: Border(top: BorderSide(color: line)),
+                  ),
+                  child: Row(
+                    children: [
+                      Text(
+                        '$words words',
+                        style: TextStyle(fontSize: 10, color: muted),
+                      ),
+                      const SizedBox(width: 14),
+                      Flexible(
+                        child: Text(
+                          'Highlight text for floating formatting · Drag assets to embed · Autosaved',
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                          style: TextStyle(fontSize: 10, color: muted),
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Text(
+                        'Page zoom:',
+                        style: TextStyle(fontSize: 10, color: muted),
+                      ),
+                      IconButton(
+                        tooltip: 'Zoom out page (10%)',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 26,
+                          minHeight: 26,
+                        ),
+                        onPressed: () => setState(
+                          () => pageZoom = (pageZoom - 0.1).clamp(0.6, 1.8),
+                        ),
+                        icon: const Icon(Icons.remove, size: 13),
+                      ),
+                      InkWell(
+                        onTap: () => setState(() => pageZoom = 1.0),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 2,
+                          ),
+                          child: Text(
+                            '${(pageZoom * 100).round()}%',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: ink,
                             ),
                           ),
                         ),
                       ),
-                    ),
-                    if (candidates.isNotEmpty)
-                      Positioned(
-                        top: 14,
-                        right: 40,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 8,
-                          ),
-                          decoration: BoxDecoration(
-                            color: gold,
-                            borderRadius: BorderRadius.circular(6),
-                            boxShadow: [
-                              BoxShadow(
-                                color: ink.withValues(alpha: .15),
-                                blurRadius: 10,
-                                offset: const Offset(0, 4),
-                              ),
-                            ],
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(Icons.download, size: 16, color: ink),
-                              const SizedBox(width: 8),
-                              Text(
-                                'DROP ASSET TO EMBED IN NOTE',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                  letterSpacing: 1.2,
-                                  color: ink,
-                                ),
-                              ),
-                            ],
-                          ),
+                      IconButton(
+                        tooltip: 'Zoom in page (10%)',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 26,
+                          minHeight: 26,
                         ),
+                        onPressed: () => setState(
+                          () => pageZoom = (pageZoom + 0.1).clamp(0.6, 1.8),
+                        ),
+                        icon: const Icon(Icons.add, size: 13),
                       ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          Container(
-            height: 32,
-            padding: const EdgeInsets.symmetric(horizontal: 22),
-            decoration: BoxDecoration(
-              color: paper,
-              border: Border(top: BorderSide(color: line)),
-            ),
-            child: Row(
-              children: [
-                Text(
-                  '$words words',
-                  style: TextStyle(fontSize: 10, color: muted),
-                ),
-                const SizedBox(width: 14),
-                Flexible(
-                  child: Text(
-                    'Highlight text for floating formatting · Drag assets to embed · Autosaved',
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
-                    style: TextStyle(fontSize: 10, color: muted),
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Text(
-                  'Page zoom:',
-                  style: TextStyle(fontSize: 10, color: muted),
-                ),
-                IconButton(
-                  tooltip: 'Zoom out page (10%)',
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: 26,
-                    minHeight: 26,
-                  ),
-                  onPressed: () => setState(
-                    () => pageZoom = (pageZoom - 0.1).clamp(0.6, 1.8),
-                  ),
-                  icon: const Icon(Icons.remove, size: 13),
-                ),
-                InkWell(
-                  onTap: () => setState(() => pageZoom = 1.0),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 4,
-                      vertical: 2,
-                    ),
-                    child: Text(
-                      '${(pageZoom * 100).round()}%',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: ink,
+                      const SizedBox(width: 14),
+                      Text(
+                        'Text:',
+                        style: TextStyle(fontSize: 10, color: muted),
                       ),
-                    ),
+                      IconButton(
+                        tooltip: 'Smaller text',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 24,
+                          minHeight: 24,
+                        ),
+                        onPressed: () => setState(
+                          () => textSize = (textSize - 1).clamp(11, 25),
+                        ),
+                        icon: const Icon(Icons.text_decrease, size: 13),
+                      ),
+                      Text(
+                        '${textSize.round()}pt',
+                        style: TextStyle(fontSize: 10, color: muted),
+                      ),
+                      IconButton(
+                        tooltip: 'Larger text',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 24,
+                          minHeight: 24,
+                        ),
+                        onPressed: () => setState(
+                          () => textSize = (textSize + 1).clamp(11, 25),
+                        ),
+                        icon: const Icon(Icons.text_increase, size: 13),
+                      ),
+                    ],
                   ),
                 ),
-                IconButton(
-                  tooltip: 'Zoom in page (10%)',
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: 26,
-                    minHeight: 26,
-                  ),
-                  onPressed: () => setState(
-                    () => pageZoom = (pageZoom + 0.1).clamp(0.6, 1.8),
-                  ),
-                  icon: const Icon(Icons.add, size: 13),
-                ),
-                const SizedBox(width: 14),
-                Text('Text:', style: TextStyle(fontSize: 10, color: muted)),
-                IconButton(
-                  tooltip: 'Smaller text',
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: 24,
-                    minHeight: 24,
-                  ),
-                  onPressed: () =>
-                      setState(() => textSize = (textSize - 1).clamp(11, 25)),
-                  icon: const Icon(Icons.text_decrease, size: 13),
-                ),
-                Text(
-                  '${textSize.round()}pt',
-                  style: TextStyle(fontSize: 10, color: muted),
-                ),
-                IconButton(
-                  tooltip: 'Larger text',
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: 24,
-                    minHeight: 24,
-                  ),
-                  onPressed: () =>
-                      setState(() => textSize = (textSize + 1).clamp(11, 25)),
-                  icon: const Icon(Icons.text_increase, size: 13),
-                ),
-              ],
-            ),
-          ),
-        ],
+            ],
+          );
+        },
       ),
     );
   }

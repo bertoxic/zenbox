@@ -10,6 +10,7 @@ import 'document_ops.dart';
 import 'model.dart';
 import 'research_service.dart';
 import 'theme.dart';
+import 'markdown_view.dart';
 
 class AiSession {
   String key = '';
@@ -1201,7 +1202,8 @@ const List<Map<String, dynamic>> legacyAiStudioTools = [
     'type': 'function',
     'function': {
       'name': 'create_shot',
-      'description': 'Create a lesson segment for an explanation plan and timed rehearsal.',
+      'description':
+          'Create a lesson segment for an explanation plan and timed rehearsal.',
       'parameters': {
         'type': 'object',
         'properties': {
@@ -2152,13 +2154,23 @@ Future<Map<String, dynamic>> _executeAiTool(
         if (operation['newTitle'] is String)
           target.title = operation['newTitle'] as String;
         if (hasBody) {
-          target.body = _mergeDocumentBody(
-            target.body,
-            operation['body'] as String? ?? '',
-            operation['bodyMode'] as String? ?? 'replace',
-          );
-          if (['note', 'script', 'manuscript'].contains(target.kind))
-            target.meta.remove('delta');
+          final body = operation['body'] as String? ?? '';
+          final bodyMode = operation['bodyMode'] as String? ?? 'replace';
+          if (['note', 'script', 'manuscript'].contains(target.kind)) {
+            switch (bodyMode) {
+              case 'append':
+                appendText(target, body);
+                break;
+              case 'prepend':
+                prependText(target, body);
+                break;
+              default:
+                setMarkdownDocument(target, body);
+                break;
+            }
+          } else {
+            target.body = _mergeDocumentBody(target.body, body, bodyMode);
+          }
         }
         if (operation['meta'] is Map) {
           target.meta.addAll(
@@ -2307,8 +2319,7 @@ Future<Map<String, dynamic>> _executeAiTool(
               document['kind'] as String? ??
               (store.settings['studentWorkspace'] == true ? 'note' : 'script');
           if (!['note', 'script', 'manuscript'].contains(kind) ||
-              title.isEmpty ||
-              content == null) {
+              title.isEmpty) {
             written.add({
               'success': false,
               'title': title,
@@ -2322,17 +2333,24 @@ Future<Map<String, dynamic>> _executeAiTool(
             body: content,
             meta: Map<String, dynamic>.from(document['meta'] as Map? ?? {}),
           );
+          if (['note', 'script', 'manuscript'].contains(kind)) {
+            setMarkdownDocument(target, content);
+          }
           project.objects.add(target);
         } else {
           if (snapshotExisting) store.snapshot(target);
           if (title.isNotEmpty) target.title = title;
-          if (content != null) {
-            target.body = _mergeDocumentBody(
-              target.body,
-              content,
-              document['mode'] as String? ?? 'replace',
-            );
-            target.meta.remove('delta');
+          final writeMode = document['mode'] as String? ?? 'replace';
+          switch (writeMode) {
+            case 'append':
+              appendText(target, content);
+              break;
+            case 'prepend':
+              prependText(target, content);
+              break;
+            default:
+              setMarkdownDocument(target, content);
+              break;
           }
           if (document['meta'] is Map) {
             target.meta.addAll(
@@ -4053,10 +4071,24 @@ class _AiPanelState extends State<AiPanel> {
                               style: const TextStyle(fontSize: 12, height: 1.8),
                             )
                           else
-                            StreamingTypewriterText(
-                              text: m.body,
-                              animate: false,
-                              style: const TextStyle(fontSize: 12, height: 1.8),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.fromLTRB(
+                                12,
+                                10,
+                                12,
+                                12,
+                              ),
+                              decoration: BoxDecoration(
+                                color: cream.withValues(alpha: .65),
+                                borderRadius: BorderRadius.circular(9),
+                                border: Border.all(color: line),
+                              ),
+                              child: MarkdownView(
+                                data: m.body,
+                                selectable: true,
+                                compact: true,
+                              ),
                             ),
                           const SizedBox(height: 7),
                           Wrap(

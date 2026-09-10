@@ -1585,7 +1585,11 @@ class _QuizModalState extends State<QuizModal> {
   }
 
   Widget _buildConfigureView() {
-    final availableSources = getProjectDocuments(widget.store);
+    // Keep source selection focused: learners choose their notes or an
+    // existing flashcard deck instead of navigating every project object.
+    final availableSources = widget.store.project.objects
+        .where((o) => {'note', 'script', 'manuscript', 'card'}.contains(o.kind))
+        .toList();
 
     return ListView(
       padding: const EdgeInsets.all(24),
@@ -1669,9 +1673,7 @@ class _QuizModalState extends State<QuizModal> {
                     value: availableSources.contains(selectedSource)
                         ? selectedSource
                         : null,
-                    hint: const Text(
-                      'Select a note, study guide, concept or PDF...',
-                    ),
+                    hint: const Text('Select a note or flashcard…'),
                     items: availableSources.map((o) {
                       final isPdf = _isPdf(o);
                       final icon = isPdf

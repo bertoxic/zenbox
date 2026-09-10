@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:media_kit/media_kit.dart';
 
 int _serial = 0;
 String newId() =>
@@ -75,10 +76,12 @@ class Project {
     id: j['id'] as String? ?? newId(),
     title: j['title'] as String? ?? 'Untitled',
     description: j['description'] as String? ?? '',
-    objects: (j['objects'] as List?)
-        ?.whereType<Map>()
-        .map((e) => CreativeObject.fromJson(Map<String, dynamic>.from(e)))
-        .toList() ?? [],
+    objects:
+        (j['objects'] as List?)
+            ?.whereType<Map>()
+            .map((e) => CreativeObject.fromJson(Map<String, dynamic>.from(e)))
+            .toList() ??
+        [],
     layout: Map<String, dynamic>.from(j['layout'] as Map? ?? {}),
   );
 }
@@ -91,6 +94,7 @@ class StudioStore extends ChangeNotifier {
   String? error;
   String saveState = 'All changes saved';
   Timer? _timer;
+  final Map<String, Future<String?>> _thumbnailJobs = {};
   Project get project => projects.firstWhere(
     (e) => e.id == currentId,
     orElse: () => projects.first,
@@ -126,7 +130,8 @@ class StudioStore extends ChangeNotifier {
               if (mediaDir.existsSync() && c.parent.path != directory.path) {
                 for (final item in mediaDir.listSync()) {
                   if (item is File) {
-                    final dest = '${directory.path}/media/${item.uri.pathSegments.last}';
+                    final dest =
+                        '${directory.path}/media/${item.uri.pathSegments.last}';
                     if (!File(dest).existsSync()) item.copySync(dest);
                   }
                 }
@@ -174,7 +179,8 @@ class StudioStore extends ChangeNotifier {
     } else {
       projects = [];
     }
-    currentId = j['currentId'] as String? ??
+    currentId =
+        j['currentId'] as String? ??
         (projects.isNotEmpty ? projects.first.id : '');
     settings = Map<String, dynamic>.from(j['settings'] as Map? ?? {});
   }
@@ -228,6 +234,54 @@ class StudioStore extends ChangeNotifier {
 
   String mediaPath(CreativeObject o) =>
       '${directory.path}/media/${o.meta['file']}';
+  String thumbnailPath(CreativeObject o) =>
+      '${directory.path}/media/${o.meta['thumbnail']}';
+
+  /// Capture a small poster frame once and reuse it everywhere the video is
+  /// represented. This keeps scrolling inexpensive and also upgrades media
+  /// imported before thumbnails were introduced.
+  Future<String?> ensureVideoThumbnail(CreativeObject o) async {
+    if (o.meta['mediaType'] != 'video') return null;
+    final existing = o.meta['thumbnail']?.toString();
+    if (existing != null &&
+        await File('${directory.path}/media/$existing').exists()) {
+      return existing;
+    }
+    final inFlight = _thumbnailJobs[o.id];
+    if (inFlight != null) return inFlight;
+    late final Future<String?> job;
+    job = _captureVideoThumbnail(
+      o,
+    ).whenComplete(() => _thumbnailJobs.remove(o.id));
+    _thumbnailJobs[o.id] = job;
+    return job;
+  }
+
+  Future<String?> _captureVideoThumbnail(CreativeObject o) async {
+    final source = File(mediaPath(o));
+    if (!await source.exists()) return null;
+    final player = Player();
+    try {
+      await player.open(Media(source.path), play: false);
+      await Future<void>.delayed(const Duration(milliseconds: 220));
+      await player.seek(const Duration(seconds: 1));
+      await Future<void>.delayed(const Duration(milliseconds: 180));
+      final bytes = await player.screenshot(format: 'image/jpeg');
+      if (bytes == null || bytes.isEmpty) return null;
+      final name = '${o.id}-thumb.jpg';
+      await File(
+        '${directory.path}/media/$name',
+      ).writeAsBytes(bytes, flush: true);
+      o.meta['thumbnail'] = name;
+      changed();
+      return name;
+    } catch (_) {
+      return null;
+    } finally {
+      await player.dispose();
+    }
+  }
+
   Future<CreativeObject> importMedia(String path, String name) async {
     final ext = name
         .split('.')
@@ -237,7 +291,7 @@ class StudioStore extends ChangeNotifier {
     final id = newId();
     final dest = '$id.$ext';
     await File(path).copy('${directory.path}/media/$dest');
-    return CreativeObject(
+    final asset = CreativeObject(
       id: id,
       kind: 'asset',
       title: name,
@@ -253,6 +307,9 @@ class StudioStore extends ChangeNotifier {
         'bytes': await File(path).length(),
       },
     );
+    // Generate the poster during import, before it can appear in a long list.
+    if (asset.meta['mediaType'] == 'video') await ensureVideoThumbnail(asset);
+    return asset;
   }
 
   void snapshot(CreativeObject o) {
@@ -261,7 +318,8 @@ class StudioStore extends ChangeNotifier {
       'at': DateTime.now().toIso8601String(),
       'body': o.body,
       'title': o.title,
-      if (o.meta['delta'] != null) 'delta': jsonDecode(jsonEncode(o.meta['delta'])),
+      if (o.meta['delta'] != null)
+        'delta': jsonDecode(jsonEncode(o.meta['delta'])),
     });
     o.meta['versions'] = versions.take(40).toList();
     changed();
@@ -365,12 +423,16 @@ Project seedProject() {
         title: 'Empirical Spacing Trials (Karpicke & Roediger)',
         body:
             'Landmark research confirming that retrieval practice produces large gains in long-term retention compared to repeated study with immediate restudy.',
-        meta: {'url': 'https://en.wikipedia.org/wiki/Testing_effect', 'status': 'Verified'},
+        meta: {
+          'url': 'https://en.wikipedia.org/wiki/Testing_effect',
+          'status': 'Verified',
+        },
       ),
       CreativeObject(
         kind: 'board',
         title: 'Working Memory',
-        body: 'Strict 4-chunk bottleneck · Central executive & phonological loop',
+        body:
+            'Strict 4-chunk bottleneck · Central executive & phonological loop',
         meta: {'x': 100.0, 'y': 100.0, 'color': 0},
       ),
       CreativeObject(
@@ -382,7 +444,8 @@ Project seedProject() {
       CreativeObject(
         kind: 'board',
         title: 'Retrieval Practice Bridge',
-        body: 'Active testing forces retrieval from LTM back into WM, strengthening pathways',
+        body:
+            'Active testing forces retrieval from LTM back into WM, strengthening pathways',
         meta: {'x': 280.0, 'y': 240.0, 'color': 2},
       ),
     ],
