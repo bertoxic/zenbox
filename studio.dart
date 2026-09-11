@@ -100,6 +100,8 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
   bool resourceGridView = false;
   bool resourceTreeCollapsed = false;
   String selectedResourceFolder = 'all';
+  final Set<String> markedResourceIds = {};
+  bool resourceSelectionMode = false;
   bool splitView = false;
   String secondaryMode = 'Scratchpad';
   double splitRatio = .5;
@@ -2941,6 +2943,93 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
     setState(() {});
   }
 
+  Future<void> _batchDeleteResources() async {
+    final count = markedResourceIds.length;
+    if (count == 0) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete $count resource${count == 1 ? '' : 's'}?'),
+        content: const Text(
+          'The selected resources will be permanently removed from your workspace. This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFA54141),
+            ),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete permanently'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final toDelete = project.objects
+        .where((o) => markedResourceIds.contains(o.id))
+        .toList();
+    for (final resource in toDelete) {
+      remove(resource);
+    }
+    setState(() {
+      markedResourceIds.clear();
+      resourceSelectionMode = false;
+    });
+    toast('Deleted $count resource${count == 1 ? '' : 's'}');
+  }
+
+  Future<void> _batchMoveResourcesDialog() async {
+    final count = markedResourceIds.length;
+    if (count == 0) return;
+    final selectedFolder = await showDialog<String?>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: Text('Move $count item${count == 1 ? '' : 's'} to…'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'root'),
+            child: const Row(
+              children: [
+                Icon(Icons.folder_open_outlined, size: 18),
+                SizedBox(width: 8),
+                Text('Root (Learning Resources)'),
+              ],
+            ),
+          ),
+          for (final folder in resourceFolders)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, folder['id']),
+              child: Row(
+                children: [
+                  Icon(Icons.folder_rounded, size: 18, color: gold),
+                  const SizedBox(width: 8),
+                  Text(folder['name']!),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+    if (selectedFolder == null) return;
+    final targetFolderId = selectedFolder == 'root' ? null : selectedFolder;
+    for (final id in markedResourceIds) {
+      final res = project.object(id);
+      if (res != null) {
+        res.meta['folderId'] = targetFolderId;
+      }
+    }
+    store.changed();
+    setState(() {
+      markedResourceIds.clear();
+      resourceSelectionMode = false;
+    });
+    toast('Moved $count resource${count == 1 ? '' : 's'}');
+  }
+
   Future<void> _deleteResourceFolder(Map<String, String> folder) async {
     final directFiles = project
         .of('asset')
@@ -3182,6 +3271,44 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
           padding: const EdgeInsets.fromLTRB(30, 0, 30, 10),
           child: Row(
             children: [
+              OutlinedButton.icon(
+                onPressed: () {
+                  setState(() {
+                    resourceSelectionMode = !resourceSelectionMode;
+                    if (!resourceSelectionMode) markedResourceIds.clear();
+                  });
+                },
+                icon: Icon(
+                  resourceSelectionMode
+                      ? Icons.check_box
+                      : Icons.check_box_outline_blank,
+                  size: 16,
+                  color: resourceSelectionMode ? sage : null,
+                ),
+                label: Text(
+                  resourceSelectionMode ? 'Done marking' : 'Mark items',
+                ),
+              ),
+              if (resourceSelectionMode || markedResourceIds.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      if (markedResourceIds.length >= visible.length && visible.isNotEmpty) {
+                        markedResourceIds.clear();
+                      } else {
+                        markedResourceIds.addAll(visible.map((r) => r.id));
+                      }
+                    });
+                  },
+                  child: Text(
+                    markedResourceIds.length >= visible.length && visible.isNotEmpty
+                        ? 'Deselect all'
+                        : 'Select all (${visible.length})',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              ],
               const Spacer(),
               SegmentedButton<bool>(
                 showSelectedIcon: false,
@@ -3279,6 +3406,57 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
                   ),
                 ),
         ),
+        if (markedResourceIds.isNotEmpty)
+          Container(
+            margin: const EdgeInsets.fromLTRB(30, 0, 30, 16),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              color: paper,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: sage, width: 1.5),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: .1),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.check_circle, size: 18, color: sage),
+                const SizedBox(width: 8),
+                Text(
+                  '${markedResourceIds.length} marked',
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                ),
+                const SizedBox(width: 14),
+                OutlinedButton.icon(
+                  onPressed: _batchMoveResourcesDialog,
+                  icon: const Icon(Icons.drive_file_move_outline, size: 16),
+                  label: const Text('Move to…'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFFA54141),
+                  ),
+                  onPressed: _batchDeleteResources,
+                  icon: const Icon(Icons.delete_outline, size: 16),
+                  label: const Text('Delete'),
+                ),
+                const Spacer(),
+                IconButton(
+                  tooltip: 'Clear selection',
+                  onPressed: () => setState(() {
+                    markedResourceIds.clear();
+                    resourceSelectionMode = false;
+                  }),
+                  icon: const Icon(Icons.close, size: 18),
+                ),
+              ],
+            ),
+          ),
       ],
     );
   }
@@ -3494,20 +3672,69 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
     bool grid = false,
     int? dragIndex,
   }) {
+    final isMarked = markedResourceIds.contains(resource.id);
     final folderName = folders
         .where((folder) => folder['id'] == resource.meta['folderId'])
         .map((folder) => folder['name'])
         .firstOrNull;
     final organizer = PopupMenuButton<String>(
       tooltip: 'Organize resource',
-      onSelected: (folder) {
+      onSelected: (folder) async {
         if (folder == 'delete') {
-          remove(resource);
+          final confirm = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: Text('Delete “${resource.title}”?'),
+              content: const Text(
+                'Are you sure you want to delete this resource? This cannot be undone.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFFA54141),
+                  ),
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Delete'),
+                ),
+              ],
+            ),
+          );
+          if (confirm == true) {
+            remove(resource);
+            markedResourceIds.remove(resource.id);
+            toast('Deleted "${resource.title}"');
+          }
+        } else if (folder == 'mark') {
+          setState(() {
+            if (isMarked) {
+              markedResourceIds.remove(resource.id);
+            } else {
+              markedResourceIds.add(resource.id);
+            }
+          });
         } else {
           _moveResourceToFolder(resource, folder);
         }
       },
       itemBuilder: (_) => [
+        PopupMenuItem(
+          value: 'mark',
+          child: Row(
+            children: [
+              Icon(
+                isMarked ? Icons.check_box : Icons.check_box_outline_blank,
+                size: 17,
+              ),
+              const SizedBox(width: 8),
+              Text(isMarked ? 'Unmark' : 'Mark for batch action'),
+            ],
+          ),
+        ),
+        const PopupMenuDivider(),
         const PopupMenuItem(value: 'root', child: Text('Remove from folder')),
         const PopupMenuDivider(),
         for (final folder in folders)
@@ -3520,9 +3747,9 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
           value: 'delete',
           child: Row(
             children: [
-              Icon(Icons.delete_outline, size: 17),
+              Icon(Icons.delete_outline, size: 17, color: Color(0xFFA54141)),
               SizedBox(width: 8),
-              Text('Delete resource'),
+              Text('Delete resource', style: TextStyle(color: Color(0xFFA54141))),
             ],
           ),
         ),
@@ -3530,15 +3757,41 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
       icon: const Icon(Icons.drive_file_move_outline, size: 19),
     );
     final card = Material(
-      color: paper,
+      color: isMarked ? paleSage.withValues(alpha: .3) : paper,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: () => preview(resource),
+        onTap: () {
+          if (resourceSelectionMode || markedResourceIds.isNotEmpty) {
+            setState(() {
+              if (isMarked) {
+                markedResourceIds.remove(resource.id);
+              } else {
+                markedResourceIds.add(resource.id);
+              }
+            });
+          } else {
+            preview(resource);
+          }
+        },
+        onLongPress: () {
+          setState(() {
+            if (isMarked) {
+              markedResourceIds.remove(resource.id);
+            } else {
+              markedResourceIds.add(resource.id);
+              resourceSelectionMode = true;
+            }
+          });
+        },
         child: Container(
           padding: const EdgeInsets.all(9),
           decoration: BoxDecoration(
-            border: Border.all(color: line),
+            color: isMarked ? paleSage.withValues(alpha: .3) : paper,
+            border: Border.all(
+              color: isMarked ? sage : line,
+              width: isMarked ? 2 : 1,
+            ),
             borderRadius: BorderRadius.circular(12),
           ),
           child: grid
@@ -3548,9 +3801,48 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
                     Expanded(
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(8),
-                        child: SizedBox(
-                          width: double.infinity,
-                          child: AssetThumbnail(store: store, asset: resource),
+                        child: Stack(
+                          children: [
+                            SizedBox(
+                              width: double.infinity,
+                              height: double.infinity,
+                              child: AssetThumbnail(store: store, asset: resource),
+                            ),
+                            Positioned(
+                              top: 5,
+                              left: 5,
+                              child: GestureDetector(
+                                onTap: () {
+                                  setState(() {
+                                    if (isMarked) {
+                                      markedResourceIds.remove(resource.id);
+                                    } else {
+                                      markedResourceIds.add(resource.id);
+                                    }
+                                  });
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.all(2),
+                                  decoration: BoxDecoration(
+                                    color: isMarked
+                                        ? sage
+                                        : paper.withValues(alpha: .85),
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: isMarked ? sage : muted,
+                                    ),
+                                  ),
+                                  child: Icon(
+                                    isMarked
+                                        ? Icons.check
+                                        : Icons.circle_outlined,
+                                    size: 14,
+                                    color: isMarked ? Colors.white : muted,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -3580,6 +3872,37 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
                   height: 66,
                   child: Row(
                     children: [
+                      GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            if (isMarked) {
+                              markedResourceIds.remove(resource.id);
+                            } else {
+                              markedResourceIds.add(resource.id);
+                            }
+                          });
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: Container(
+                            padding: const EdgeInsets.all(2),
+                            decoration: BoxDecoration(
+                              color: isMarked
+                                  ? sage
+                                  : paper.withValues(alpha: .85),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: isMarked ? sage : muted,
+                              ),
+                            ),
+                            child: Icon(
+                              isMarked ? Icons.check : Icons.circle_outlined,
+                              size: 14,
+                              color: isMarked ? Colors.white : muted,
+                            ),
+                          ),
+                        ),
+                      ),
                       ClipRRect(
                         borderRadius: BorderRadius.circular(8),
                         child: SizedBox(
@@ -5007,20 +5330,108 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
                         o,
                         InkWell(
                           onTap: () => preview(o),
-                          child: Column(
+                          child: Stack(
                             children: [
-                              Expanded(
-                                child: SizedBox(
-                                  width: double.infinity,
-                                  child: AssetThumbnail(store: store, asset: o),
-                                ),
+                              Column(
+                                children: [
+                                  Expanded(
+                                    child: SizedBox(
+                                      width: double.infinity,
+                                      child: AssetThumbnail(store: store, asset: o),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 5),
+                                  Text(
+                                    o.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 9),
+                                  ),
+                                ],
                               ),
-                              const SizedBox(height: 5),
-                              Text(
-                                o.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 9),
+                              Positioned(
+                                top: 2,
+                                right: 2,
+                                child: PopupMenuButton<String>(
+                                  tooltip: 'Asset options',
+                                  iconSize: 13,
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(
+                                    minWidth: 24,
+                                    minHeight: 24,
+                                  ),
+                                  onSelected: (action) async {
+                                    if (action == 'delete') {
+                                      final confirm = await showDialog<bool>(
+                                        context: context,
+                                        builder: (context) => AlertDialog(
+                                          title: Text('Delete “${o.title}”?'),
+                                          content: const Text(
+                                            'Are you sure you want to delete this resource? This cannot be undone.',
+                                          ),
+                                          actions: [
+                                            TextButton(
+                                              onPressed: () =>
+                                                  Navigator.pop(context, false),
+                                              child: const Text('Cancel'),
+                                            ),
+                                            FilledButton(
+                                              style: FilledButton.styleFrom(
+                                                backgroundColor:
+                                                    const Color(0xFFA54141),
+                                              ),
+                                              onPressed: () =>
+                                                  Navigator.pop(context, true),
+                                              child: const Text('Delete'),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                      if (confirm == true) {
+                                        remove(o);
+                                        toast('Deleted "${o.title}"');
+                                      }
+                                    } else if (action == 'preview') {
+                                      preview(o);
+                                    }
+                                  },
+                                  itemBuilder: (_) => [
+                                    const PopupMenuItem(
+                                      value: 'preview',
+                                      child: Text('Preview'),
+                                    ),
+                                    const PopupMenuItem(
+                                      value: 'delete',
+                                      child: Row(
+                                        children: [
+                                          Icon(
+                                            Icons.delete_outline,
+                                            size: 16,
+                                            color: Color(0xFFA54141),
+                                          ),
+                                          SizedBox(width: 8),
+                                          Text(
+                                            'Delete',
+                                            style: TextStyle(
+                                              color: Color(0xFFA54141),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                  icon: Container(
+                                    padding: const EdgeInsets.all(2),
+                                    decoration: BoxDecoration(
+                                      color: paper.withValues(alpha: .85),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Icon(
+                                      Icons.more_vert,
+                                      size: 13,
+                                    ),
+                                  ),
+                                ),
                               ),
                             ],
                           ),

@@ -64,6 +64,7 @@ class _ZenboxShellState extends State<ZenboxShell> {
   String mode = 'Home', deck = 'AI';
   String? selectedId, previewId;
   bool focus = false, showTray = true, showDeck = true, web = false;
+  final Set<String> markedObjectIds = {};
   double deckWidth = 360;
   SelectionRequest? selection;
   Timer? ticker;
@@ -537,82 +538,284 @@ class _ZenboxShellState extends State<ZenboxShell> {
             child: Text(o.title),
           ),
         ),
-        child: ListTile(
-          dense: compact,
-          selected: selectedId == o.id,
-          leading: SizedBox(
-            width: 28,
-            height: 32,
-            child: o.meta['file'] != null
-                ? AssetThumbnail(store: store, asset: o)
-                : Icon(objectIcon(o), size: 21),
-          ),
-          title: Text(o.title, maxLines: 2, overflow: TextOverflow.ellipsis),
-          subtitle: Text(
-            '${o.kind}${o.meta['aiContext'] == true ? ' · AI context' : ''}',
-            style: const TextStyle(fontSize: 10),
-          ),
-          onTap: () => open(o),
-          onLongPress: () => showPreview(o),
-          trailing: PopupMenuButton<String>(
-            tooltip: 'Object actions',
-            onSelected: (v) {
-              switch (v) {
-                case 'preview':
-                  showPreview(o);
-                case 'tray':
-                  store.setTray(o, o.meta['tray'] != true);
-                case 'context':
-                  store.setContext(o, o.meta['aiContext'] != true);
-                case 'link':
-                  if (selected != null && selected!.id != o.id) {
-                    selected!.links.add(o.id);
-                    store.changed();
-                    message('Linked to ${selected!.title}');
+        child: Builder(
+          builder: (context) {
+          final isMarked = markedObjectIds.contains(o.id);
+          return ListTile(
+            dense: compact,
+            selected: selectedId == o.id,
+            leading: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (markedObjectIds.isNotEmpty)
+                  GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        if (isMarked) {
+                          markedObjectIds.remove(o.id);
+                        } else {
+                          markedObjectIds.add(o.id);
+                        }
+                      });
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: Icon(
+                        isMarked
+                            ? Icons.check_box
+                            : Icons.check_box_outline_blank,
+                        size: 16,
+                        color: isMarked ? moss : secondaryInk,
+                      ),
+                    ),
+                  ),
+                SizedBox(
+                  width: 28,
+                  height: 32,
+                  child: o.meta['file'] != null
+                      ? AssetThumbnail(store: store, asset: o)
+                      : Icon(objectIcon(o), size: 21),
+                ),
+              ],
+            ),
+            title: Text(o.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+            subtitle: Text(
+              '${o.kind}${o.meta['aiContext'] == true ? ' · AI context' : ''}',
+              style: const TextStyle(fontSize: 10),
+            ),
+            onTap: () {
+              if (markedObjectIds.isNotEmpty) {
+                setState(() {
+                  if (isMarked) {
+                    markedObjectIds.remove(o.id);
+                  } else {
+                    markedObjectIds.add(o.id);
                   }
-                case 'popout':
-                  popout(o);
-                case 'delete':
-                  store.remove(o);
+                });
+              } else {
+                open(o);
               }
             },
-            itemBuilder: (_) => [
-              const PopupMenuItem(
-                value: 'preview',
-                child: Text('Preview in side deck'),
-              ),
-              const PopupMenuItem(
-                value: 'popout',
-                child: Text('Open large reader'),
-              ),
-              PopupMenuItem(
-                value: 'tray',
-                child: Text(
-                  o.meta['tray'] == true
-                      ? 'Remove from tray'
-                      : 'Keep in temporary tray',
+            onLongPress: () {
+              setState(() {
+                if (isMarked) {
+                  markedObjectIds.remove(o.id);
+                } else {
+                  markedObjectIds.add(o.id);
+                }
+              });
+            },
+            trailing: PopupMenuButton<String>(
+              tooltip: 'Object actions',
+              onSelected: (v) async {
+                switch (v) {
+                  case 'mark':
+                    setState(() {
+                      if (isMarked) {
+                        markedObjectIds.remove(o.id);
+                      } else {
+                        markedObjectIds.add(o.id);
+                      }
+                    });
+                  case 'preview':
+                    showPreview(o);
+                  case 'tray':
+                    store.setTray(o, o.meta['tray'] != true);
+                  case 'context':
+                    store.setContext(o, o.meta['aiContext'] != true);
+                  case 'link':
+                    if (selected != null && selected!.id != o.id) {
+                      selected!.links.add(o.id);
+                      store.changed();
+                      message('Linked to ${selected!.title}');
+                    }
+                  case 'popout':
+                    popout(o);
+                  case 'delete':
+                    final confirm = await showDialog<bool>(
+                      context: context,
+                      builder: (context) => AlertDialog(
+                        title: Text('Delete “${o.title}”?'),
+                        content: const Text(
+                          'Are you sure you want to delete this resource? Undo is available.',
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(context, false),
+                            child: const Text('Cancel'),
+                          ),
+                          FilledButton(
+                            style: FilledButton.styleFrom(
+                              backgroundColor: const Color(0xFFA54141),
+                            ),
+                            onPressed: () => Navigator.pop(context, true),
+                            child: const Text('Delete'),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (confirm == true) {
+                      store.remove(o);
+                      markedObjectIds.remove(o.id);
+                      message('Deleted "${o.title}"');
+                    }
+                }
+              },
+              itemBuilder: (_) => [
+                PopupMenuItem(
+                  value: 'mark',
+                  child: Row(
+                    children: [
+                      Icon(
+                        isMarked
+                            ? Icons.check_box
+                            : Icons.check_box_outline_blank,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(isMarked ? 'Unmark' : 'Mark for batch action'),
+                    ],
+                  ),
                 ),
-              ),
-              PopupMenuItem(
-                value: 'context',
-                child: Text(
-                  o.meta['aiContext'] == true
-                      ? 'Remove AI context'
-                      : 'Include in AI context',
+                const PopupMenuItem(
+                  value: 'preview',
+                  child: Text('Preview in side deck'),
                 ),
-              ),
-              const PopupMenuItem(
-                value: 'link',
-                child: Text('Link to active note'),
-              ),
-              const PopupMenuItem(
-                value: 'delete',
-                child: Text('Delete object (undo available)'),
-              ),
-            ],
-          ),
+                const PopupMenuItem(
+                  value: 'popout',
+                  child: Text('Open large reader'),
+                ),
+                PopupMenuItem(
+                  value: 'tray',
+                  child: Text(
+                    o.meta['tray'] == true
+                        ? 'Remove from tray'
+                        : 'Keep in temporary tray',
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'context',
+                  child: Text(
+                    o.meta['aiContext'] == true
+                        ? 'Remove AI context'
+                        : 'Include in AI context',
+                  ),
+                ),
+                const PopupMenuItem(
+                  value: 'link',
+                  child: Text('Link to active note'),
+                ),
+                const PopupMenuItem(
+                  value: 'delete',
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.delete_outline,
+                        size: 16,
+                        color: Color(0xFFA54141),
+                      ),
+                      SizedBox(width: 8),
+                      Text(
+                        'Delete resource',
+                        style: TextStyle(color: Color(0xFFA54141)),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+
+  Future<void> _batchDeleteMarked() async {
+    final count = markedObjectIds.length;
+    if (count == 0) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete $count resource${count == 1 ? '' : 's'}?'),
+        content: const Text(
+          'Are you sure you want to permanently delete the selected resources from the project?',
         ),
-      );
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFA54141),
+            ),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete all'),
+          ),
+        ],
+      ),
+    );
+    if (confirm == true) {
+      final toDelete = store.project.objects
+          .where((o) => markedObjectIds.contains(o.id))
+          .toList();
+      for (final o in toDelete) {
+        store.remove(o);
+      }
+      setState(() {
+        markedObjectIds.clear();
+      });
+      message('Deleted $count resource${count == 1 ? '' : 's'}');
+    }
+  }
+
+  Future<void> _batchMoveMarked() async {
+    final count = markedObjectIds.length;
+    if (count == 0) return;
+    final selectedCourse = await showDialog<String?>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: Text('Move $count item${count == 1 ? '' : 's'} to course…'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'none'),
+            child: const Row(
+              children: [
+                Icon(Icons.folder_open_outlined, size: 18),
+                SizedBox(width: 8),
+                Text('No course (General)'),
+              ],
+            ),
+          ),
+          for (final course in store.courses)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, course.id),
+              child: Row(
+                children: [
+                  const Icon(Icons.school_outlined, size: 18),
+                  const SizedBox(width: 8),
+                  Text(course.title),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+    if (selectedCourse == null) return;
+    final courseVal = selectedCourse == 'none' ? null : selectedCourse;
+    for (final id in markedObjectIds) {
+      final obj = store.project.object(id);
+      if (obj != null) {
+        obj.meta['course'] = courseVal;
+        obj.meta['courseId'] = courseVal;
+      }
+    }
+    store.changed();
+    setState(() {
+      markedObjectIds.clear();
+    });
+    message('Moved $count resource${count == 1 ? '' : 's'}');
+  }
+
   Widget reader(CreativeObject o) => SourceReader(
     key: ValueKey(o.id),
     store: store,
@@ -997,13 +1200,78 @@ class _ZenboxShellState extends State<ZenboxShell> {
           child: zenHeading(
             'Your study library',
             'Documents, images, recordings, and reference material.',
-            action: IconButton(
-              tooltip: 'Import assets',
-              onPressed: importFiles,
-              icon: const Icon(Icons.upload_file),
+            action: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (store.assets.isNotEmpty)
+                  TextButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        if (markedObjectIds.length >= store.assets.length) {
+                          markedObjectIds.clear();
+                        } else {
+                          markedObjectIds.addAll(store.assets.map((a) => a.id));
+                        }
+                      });
+                    },
+                    icon: Icon(
+                      markedObjectIds.length >= store.assets.length
+                          ? Icons.deselect
+                          : Icons.select_all,
+                      size: 16,
+                    ),
+                    label: Text(
+                      markedObjectIds.length >= store.assets.length
+                          ? 'Deselect all'
+                          : 'Select all',
+                    ),
+                  ),
+                const SizedBox(width: 8),
+                IconButton(
+                  tooltip: 'Import assets',
+                  onPressed: importFiles,
+                  icon: const Icon(Icons.upload_file),
+                ),
+              ],
             ),
           ),
         ),
+        if (markedObjectIds.isNotEmpty)
+          Container(
+            color: moss.withValues(alpha: 0.12),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+            child: Row(
+              children: [
+                Icon(Icons.check_circle_outline, size: 18, color: moss),
+                const SizedBox(width: 8),
+                Text(
+                  '${markedObjectIds.length} marked',
+                  style: TextStyle(fontWeight: FontWeight.bold, color: moss),
+                ),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: _batchMoveMarked,
+                  icon: const Icon(Icons.drive_file_move_outlined, size: 16),
+                  label: const Text('Move to…'),
+                ),
+                const SizedBox(width: 8),
+                TextButton.icon(
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFFA54141),
+                  ),
+                  onPressed: _batchDeleteMarked,
+                  icon: const Icon(Icons.delete_outline, size: 16),
+                  label: const Text('Delete'),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  tooltip: 'Clear selection',
+                  onPressed: () => setState(() => markedObjectIds.clear()),
+                  icon: const Icon(Icons.close, size: 18),
+                ),
+              ],
+            ),
+          ),
         Expanded(
           child: ListView(children: store.assets.map(objectTile).toList()),
         ),
