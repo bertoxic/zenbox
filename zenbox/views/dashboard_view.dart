@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import '../../theme.dart';
 import '../../zenbox_model.dart';
 import '../../zenbox_theme.dart';
 
@@ -22,13 +23,196 @@ class _DashboardViewState extends State<DashboardView> {
   ZenboxStore get store => widget.store;
 
   Future<void> _pickWallpaper() async {
-    final result = await FilePicker.platform.pickFiles(type: FileType.image);
-    if (result != null && result.files.single.path != null) {
-      setState(() {
-        store.project.layout['dashboardWallpaper'] = result.files.single.path;
-      });
-      store.changed();
-    }
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(
+                  'Dashboard illustration',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+                subtitle: Text(
+                  'Choose a Zenbox illustration or add your own image.',
+                ),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  for (final option in bundledDashboardIllustrations)
+                    InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: () {
+                        setState(() {
+                          store.project.layout['dashboardWallpaperAsset'] =
+                              option.assetPath;
+                          store.project.layout['overviewWallpaperAsset'] =
+                              option.assetPath;
+                          store.project.layout.remove('dashboardWallpaper');
+                          store.project.layout.remove('overviewWallpaper');
+                        });
+                        studioSettingsNotifier.value =
+                            studioSettingsNotifier.value.copyWith(
+                          dashboardWallpaperAsset: option.assetPath,
+                          clearDashboardWallpaper: true,
+                        );
+                        store.changed();
+                        Navigator.pop(context);
+                      },
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 120,
+                            height: 74,
+                            clipBehavior: Clip.antiAlias,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: (store.project.layout['dashboardWallpaperAsset'] ??
+                                            store.project.layout['overviewWallpaperAsset'] ??
+                                            studioSettingsNotifier.value.dashboardWallpaperAsset ??
+                                            defaultDashboardWallpaperAsset) ==
+                                        option.assetPath &&
+                                    (store.project.layout['dashboardWallpaper'] == null &&
+                                        store.project.layout['overviewWallpaper'] == null &&
+                                        studioSettingsNotifier.value.dashboardWallpaper == null)
+                                    ? moss
+                                    : edge,
+                                width: (store.project.layout['dashboardWallpaperAsset'] ??
+                                            store.project.layout['overviewWallpaperAsset'] ??
+                                            studioSettingsNotifier.value.dashboardWallpaperAsset ??
+                                            defaultDashboardWallpaperAsset) ==
+                                        option.assetPath &&
+                                    (store.project.layout['dashboardWallpaper'] == null &&
+                                        store.project.layout['overviewWallpaper'] == null &&
+                                        studioSettingsNotifier.value.dashboardWallpaper == null)
+                                    ? 2.5
+                                    : 1,
+                              ),
+                            ),
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                Image.asset(option.assetPath, fit: BoxFit.cover),
+                                if ((store.project.layout['dashboardWallpaperAsset'] ??
+                                            store.project.layout['overviewWallpaperAsset'] ??
+                                            studioSettingsNotifier.value.dashboardWallpaperAsset ??
+                                            defaultDashboardWallpaperAsset) ==
+                                        option.assetPath &&
+                                    (store.project.layout['dashboardWallpaper'] == null &&
+                                        store.project.layout['overviewWallpaper'] == null &&
+                                        studioSettingsNotifier.value.dashboardWallpaper == null))
+                                  Positioned(
+                                    top: 4,
+                                    right: 4,
+                                    child: Container(
+                                      padding: const EdgeInsets.all(2),
+                                      decoration: const BoxDecoration(
+                                        color: moss,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(
+                                        Icons.check,
+                                        size: 12,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          SizedBox(
+                            width: 120,
+                            child: Text(
+                              option.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.add_photo_alternate_outlined),
+                title: const Text('Use custom image…'),
+                subtitle: const Text('Pick any JPG, PNG, or WEBP from your computer'),
+                onTap: () async {
+                  final result = await FilePicker.pickFiles(
+                    type: FileType.image,
+                  );
+                  if (result.isEmpty ||
+                      result.single.path == null ||
+                      !context.mounted) {
+                    return;
+                  }
+                  final pickedPath = result.single.path!;
+                  setState(() {
+                    store.project.layout['dashboardWallpaper'] = pickedPath;
+                    store.project.layout['overviewWallpaper'] = pickedPath;
+                    store.project.layout.remove('dashboardWallpaperAsset');
+                    store.project.layout.remove('overviewWallpaperAsset');
+                  });
+                  studioSettingsNotifier.value =
+                      studioSettingsNotifier.value.copyWith(
+                    dashboardWallpaper: pickedPath,
+                    clearDashboardWallpaperAsset: true,
+                  );
+                  store.changed();
+                  if (context.mounted) Navigator.pop(context);
+                },
+              ),
+              if (store.project.layout['dashboardWallpaper'] != null ||
+                  store.project.layout['overviewWallpaper'] != null ||
+                  store.project.layout['dashboardWallpaperAsset'] != null ||
+                  store.project.layout['overviewWallpaperAsset'] != null ||
+                  studioSettingsNotifier.value.dashboardWallpaper != null ||
+                  studioSettingsNotifier.value.dashboardWallpaperAsset != null)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.restart_alt),
+                  title: const Text('Restore default illustration'),
+                  onTap: () {
+                    setState(() {
+                      store.project.layout.remove('dashboardWallpaper');
+                      store.project.layout.remove('overviewWallpaper');
+                      store.project.layout.remove('dashboardWallpaperAsset');
+                      store.project.layout.remove('overviewWallpaperAsset');
+                    });
+                    studioSettingsNotifier.value =
+                        studioSettingsNotifier.value.copyWith(
+                      clearDashboardWallpaper: true,
+                      clearDashboardWallpaperAsset: true,
+                    );
+                    store.changed();
+                    Navigator.pop(context);
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -36,7 +220,14 @@ class _DashboardViewState extends State<DashboardView> {
     listenable: store,
     builder: (context, _) {
       final customWallpaper =
-          store.project.layout['dashboardWallpaper'] as String?;
+          store.project.layout['dashboardWallpaper'] as String? ??
+          store.project.layout['overviewWallpaper'] as String? ??
+          studioSettingsNotifier.value.dashboardWallpaper;
+      final assetWallpaper =
+          store.project.layout['dashboardWallpaperAsset'] as String? ??
+          store.project.layout['overviewWallpaperAsset'] as String? ??
+          studioSettingsNotifier.value.dashboardWallpaperAsset ??
+          defaultDashboardWallpaperAsset;
       return ListView(
         padding: EdgeInsets.zero,
         children: [
@@ -45,6 +236,7 @@ class _DashboardViewState extends State<DashboardView> {
             dueCount: store.dueCards.length,
             onStudy: () => widget.onNavigate('Review'),
             customWallpaperPath: customWallpaper,
+            wallpaperAssetPath: assetWallpaper,
             onChangeWallpaper: _pickWallpaper,
           ),
           Padding(
@@ -107,14 +299,18 @@ class _HeroBanner extends StatelessWidget {
     required this.onStudy,
     required this.onChangeWallpaper,
     this.customWallpaperPath,
+    this.wallpaperAssetPath,
   });
   final int dueCount;
   final VoidCallback onStudy;
   final VoidCallback onChangeWallpaper;
   final String? customWallpaperPath;
+  final String? wallpaperAssetPath;
 
   @override
   Widget build(BuildContext context) {
+    final assetFallback =
+        wallpaperAssetPath ?? defaultDashboardWallpaperAsset;
     return SizedBox(
       height: 250,
       child: Stack(
@@ -126,14 +322,14 @@ class _HeroBanner extends StatelessWidget {
               File(customWallpaperPath!),
               fit: BoxFit.cover,
               errorBuilder: (_, __, ___) => Image.asset(
-                'assets/illustrations/dashboard_hero.jpg',
+                assetFallback,
                 fit: BoxFit.cover,
                 errorBuilder: (_, __, ___) => Container(color: forest),
               ),
             )
           else
             Image.asset(
-              'assets/illustrations/dashboard_hero.jpg',
+              assetFallback,
               fit: BoxFit.cover,
               errorBuilder: (_, _, _) => Container(color: forest),
             ),

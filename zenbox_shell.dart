@@ -6,6 +6,7 @@ import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:zenbox/theme.dart';
 import 'ai.dart';
 import 'document_ops.dart';
 import 'model.dart';
@@ -224,6 +225,9 @@ class _ZenboxShellState extends State<ZenboxShell> {
       body: text ?? '',
       courseId: store.activeCourseId ?? '',
     );
+    if (text != null && text.isNotEmpty) {
+      setMarkdownDocument(o, text);
+    }
     store.addNote(o);
     open(o);
   }
@@ -269,9 +273,11 @@ class _ZenboxShellState extends State<ZenboxShell> {
 
   Future<void> exportObject(CreativeObject o) async {
     try {
+      final doc = readDocument(o);
+      final mdContent = deltaToMarkdown(doc.toDelta());
       final path = await FilePicker.saveFile(
         fileName: '${o.title.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_')}.md',
-        bytes: utf8.encode('# ${o.title}\n\n${o.body}'),
+        bytes: utf8.encode('# ${o.title}\n\n$mdContent'),
       );
       if (path != null) message('Document exported.');
     } catch (e) {
@@ -1692,63 +1698,86 @@ class ConceptCanvas extends StatefulWidget {
 class _ConceptCanvasState extends State<ConceptCanvas> {
   String? linking;
   @override
-  Widget build(BuildContext context) => Column(
-    children: [
-      Padding(
-        padding: const EdgeInsets.all(20),
-        child: Row(
+  Widget build(BuildContext context) => ValueListenableBuilder<StudioSettings>(
+    valueListenable: studioSettingsNotifier,
+    builder: (context, settings, _) {
+      final isDark = settings.themePreset == StudioThemePreset.obsidian;
+      final themePreset = settings.themePreset;
+      final canvasBg = isDark ? themePreset.background : canvas;
+
+      return Container(
+        color: canvasBg,
+        child: Column(
           children: [
-            const Expanded(
-              child: Text(
-                'Concept canvas',
-                style: TextStyle(fontFamily: 'Georgia', fontSize: 25),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Concept canvas',
+                      style: TextStyle(
+                        fontFamily: 'Georgia',
+                        fontSize: 25,
+                        color: isDark ? themePreset.ink : forest,
+                      ),
+                    ),
+                  ),
+                  if (linking != null)
+                    TextButton(
+                      onPressed: () => setState(() => linking = null),
+                      child: const Text('Cancel link'),
+                    ),
+                  IconButton(
+                    tooltip: 'Add concept',
+                    onPressed: widget.onAdd,
+                    icon: const Icon(Icons.add),
+                  ),
+                ],
               ),
             ),
             if (linking != null)
-              TextButton(
-                onPressed: () => setState(() => linking = null),
-                child: const Text('Cancel link'),
-              ),
-            IconButton(
-              tooltip: 'Add concept',
-              onPressed: widget.onAdd,
-              icon: const Icon(Icons.add),
-            ),
-          ],
-        ),
-      ),
-      if (linking != null)
-        const Text(
-          'Choose another concept to connect. Tap a node’s link icon to begin.',
-        ),
-      Expanded(
-        child: InteractiveViewer(
-          constrained: false,
-          boundaryMargin: const EdgeInsets.all(500),
-          minScale: .3,
-          maxScale: 2,
-          child: DragTarget<CreativeObject>(
-            onAcceptWithDetails: (d) {
-              widget.store.addConcept(
-                ConceptNode(
-                  courseId: widget.store.activeCourseId ?? '',
-                  name: d.data.title,
-                  body: '',
-                  links: [d.data.id],
-                  x: 100,
-                  y: 180,
+              Text(
+                'Choose another concept to connect. Tap a node’s link icon to begin.',
+                style: TextStyle(
+                  color: isDark ? themePreset.primary : secondaryInk,
                 ),
-              );
-            },
-            builder: (context, accepted, rejected) => SizedBox(
-              width: 1500,
-              height: 1100,
-              child: Stack(
-                children: [
-                  CustomPaint(
-                    size: const Size(1500, 1100),
-                    painter: _Connections(widget.store),
-                  ),
+              ),
+            Expanded(
+              child: InteractiveViewer(
+                constrained: false,
+                boundaryMargin: const EdgeInsets.all(500),
+                minScale: .3,
+                maxScale: 2,
+                child: DragTarget<CreativeObject>(
+                  onAcceptWithDetails: (d) {
+                    widget.store.addConcept(
+                      ConceptNode(
+                        courseId: widget.store.activeCourseId ?? '',
+                        name: d.data.title,
+                        body: '',
+                        links: [d.data.id],
+                        x: 100,
+                        y: 180,
+                      ),
+                    );
+                  },
+                  builder: (context, accepted, rejected) => SizedBox(
+                    width: 1500,
+                    height: 1100,
+                    child: Stack(
+                      children: [
+                        CustomPaint(
+                          size: const Size(1500, 1100),
+                          painter: _Connections(
+                            widget.store,
+                            lineColor: isDark
+                                ? themePreset.primary.withValues(alpha: 0.8)
+                                : olive,
+                            labelBg: isDark ? themePreset.paper : surface,
+                            labelColor: isDark ? themePreset.primary : moss,
+                          ),
+                        ),
                   ...widget.store.concepts
                       .where(
                         (n) =>
@@ -1850,16 +1879,29 @@ class _ConceptCanvasState extends State<ConceptCanvas> {
         ),
       ),
     ],
-  );
+  ),
+);
+},
+);
 }
 
 class _Connections extends CustomPainter {
-  _Connections(this.store);
+  _Connections(
+    this.store, {
+    this.lineColor = olive,
+    this.labelBg = surface,
+    this.labelColor = moss,
+  });
+
   final ZenboxStore store;
+  final Color lineColor;
+  final Color labelBg;
+  final Color labelColor;
+
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = olive
+      ..color = lineColor
       ..strokeWidth = 2;
     for (final r in store.relations) {
       if (r.links.length < 2) continue;
@@ -1872,10 +1914,10 @@ class _Connections extends CustomPainter {
       final label = TextPainter(
         text: TextSpan(
           text: r.title,
-          style: const TextStyle(
-            color: moss,
+          style: TextStyle(
+            color: labelColor,
             fontSize: 11,
-            backgroundColor: surface,
+            backgroundColor: labelBg,
           ),
         ),
         textDirection: TextDirection.ltr,

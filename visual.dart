@@ -515,184 +515,197 @@ class _CanvasWorkspaceState extends State<CanvasWorkspace> {
   }
 
   @override
-  Widget build(BuildContext context) => Column(
-    children: [
-      SectionHeading(
-        'Visual concept workspace',
-        'Mind Map & Concept Board',
-        subtitle:
-            'Connect ideas across topics · Drag cards to arrange · Double-click canvas to add · Double-click card to edit',
-        actions: [
-          SizedBox(
-            width: 140,
-            height: 30,
-            child: TextField(
-              style: const TextStyle(fontSize: 11),
-              decoration: InputDecoration(
-                hintText: 'Search board...',
-                hintStyle: TextStyle(fontSize: 10, color: muted),
-                prefixIcon: const Icon(Icons.search, size: 14),
-                contentPadding: EdgeInsets.zero,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(6),
+  Widget build(BuildContext context) => ValueListenableBuilder<StudioSettings>(
+    valueListenable: studioSettingsNotifier,
+    builder: (context, settings, _) {
+      final isDark = settings.themePreset == StudioThemePreset.obsidian;
+      final canvasBg = isDark ? settings.themePreset.background : const Color(0xFFF3F3EC);
+      final dotColor = isDark
+          ? settings.themePreset.primary.withValues(alpha: 0.35)
+          : settings.themePreset.primary.withValues(alpha: 0.22);
+
+      return Column(
+        children: [
+          SectionHeading(
+            'Visual concept workspace',
+            'Mind Map & Concept Board',
+            subtitle:
+                'Connect ideas across topics · Drag cards to arrange · Double-click canvas to add · Double-click card to edit',
+            actions: [
+              SizedBox(
+                width: 140,
+                height: 30,
+                child: TextField(
+                  style: const TextStyle(fontSize: 11),
+                  decoration: InputDecoration(
+                    hintText: 'Search board...',
+                    hintStyle: TextStyle(fontSize: 10, color: muted),
+                    prefixIcon: const Icon(Icons.search, size: 14),
+                    contentPadding: EdgeInsets.zero,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    isDense: true,
+                  ),
+                  onChanged: (v) =>
+                      setState(() => searchQuery = v.trim().toLowerCase()),
                 ),
-                isDense: true,
               ),
-              onChanged: (v) =>
-                  setState(() => searchQuery = v.trim().toLowerCase()),
-            ),
-          ),
-          const SizedBox(width: 8),
-          IconButton(
-            tooltip: 'Auto arrange into concept tree',
-            onPressed: _autoArrange,
-            icon: const Icon(Icons.auto_awesome_mosaic_outlined),
-          ),
-          IconButton(
-            tooltip: 'Fit all concepts in view',
-            onPressed: _fitView,
-            icon: const Icon(Icons.fit_screen_outlined),
-          ),
-          IconButton(
-            tooltip: 'Zoom in',
-            onPressed: () => _zoom(1.2),
-            icon: const Icon(Icons.zoom_in, size: 19),
-          ),
-          IconButton(
-            tooltip: 'Zoom out',
-            onPressed: () => _zoom(0.83),
-            icon: const Icon(Icons.zoom_out, size: 19),
-          ),
-          IconButton(
-            tooltip: connecting ? 'Cancel linking' : 'Connect selected card',
-            onPressed: selected == null
-                ? null
-                : () => setState(() => connecting = !connecting),
-            icon: Icon(Icons.hub_outlined, color: connecting ? gold : muted),
-          ),
-          IconButton(
-            tooltip: 'Delete selected card',
-            onPressed: selected == null
-                ? null
-                : () {
-                    final object = widget.store.project.object(selected);
-                    if (object != null) widget.remove(object);
-                  },
-            icon: const Icon(Icons.delete_outline, color: Color(0xFFA54141)),
-          ),
-          const SizedBox(width: 6),
-          FilledButton.icon(
-            onPressed: () => add(),
-            icon: const Icon(Icons.add, size: 16),
-            label: const Text('Add card'),
-          ),
-        ],
-      ),
-      if (connecting)
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          color: gold.withValues(alpha: 0.15),
-          child: Row(
-            children: [
-              Icon(Icons.hub, size: 16, color: gold),
               const SizedBox(width: 8),
-              Text(
-                'Linking Mode Active: Click any target card to connect from selected card',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: ink,
-                ),
+              IconButton(
+                tooltip: 'Auto arrange into concept tree',
+                onPressed: _autoArrange,
+                icon: const Icon(Icons.auto_awesome_mosaic_outlined),
               ),
-              const Spacer(),
-              TextButton(
-                style: TextButton.styleFrom(
-                  visualDensity: VisualDensity.compact,
-                ),
-                onPressed: () => setState(() => connecting = false),
-                child: const Text(
-                  'Cancel Linking',
-                  style: TextStyle(fontSize: 11),
-                ),
+              IconButton(
+                tooltip: 'Fit all concepts in view',
+                onPressed: _fitView,
+                icon: const Icon(Icons.fit_screen_outlined),
+              ),
+              IconButton(
+                tooltip: 'Zoom in',
+                onPressed: () => _zoom(1.2),
+                icon: const Icon(Icons.zoom_in, size: 19),
+              ),
+              IconButton(
+                tooltip: 'Zoom out',
+                onPressed: () => _zoom(0.83),
+                icon: const Icon(Icons.zoom_out, size: 19),
+              ),
+              IconButton(
+                tooltip: connecting ? 'Cancel linking' : 'Connect selected card',
+                onPressed: selected == null
+                    ? null
+                    : () => setState(() => connecting = !connecting),
+                icon: Icon(Icons.hub_outlined, color: connecting ? gold : muted),
+              ),
+              IconButton(
+                tooltip: 'Delete selected card',
+                onPressed: selected == null
+                    ? null
+                    : () {
+                        final object = widget.store.project.object(selected);
+                        if (object != null) widget.remove(object);
+                      },
+                icon: const Icon(Icons.delete_outline, color: Color(0xFFA54141)),
+              ),
+              const SizedBox(width: 6),
+              FilledButton.icon(
+                onPressed: () => add(),
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('Add card'),
               ),
             ],
           ),
-        ),
-      Expanded(
-        child: ClipRect(
-          child: LayoutBuilder(
-            builder: (context, constraints) => DragTarget<CreativeObject>(
-              onAcceptWithDetails: (details) {
-                final box = context.findRenderObject() as RenderBox;
-                final point = transform.toScene(
-                  box.globalToLocal(details.offset),
-                );
-                add(
-                  source: details.data,
-                  point: Offset(
-                    point.dx.clamp(50, 2700),
-                    point.dy.clamp(50, 1750),
+          if (connecting)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: gold.withValues(alpha: 0.15),
+              child: Row(
+                children: [
+                  Icon(Icons.hub, size: 16, color: gold),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Linking Mode Active: Click any target card to connect from selected card',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: ink,
+                    ),
                   ),
-                );
-              },
-              builder: (context, candidates, rejected) => Container(
-                color: candidates.isNotEmpty
-                    ? paleSage.withValues(alpha: .5)
-                    : const Color(0xFFF3F3EC),
-                child: MouseRegion(
-                  onHover: (event) {
-                    if (connecting) {
-                      setState(() {
-                        mouseScenePoint = transform.toScene(
-                          event.localPosition,
-                        );
-                      });
-                    }
+                  const Spacer(),
+                  TextButton(
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    onPressed: () => setState(() => connecting = false),
+                    child: const Text(
+                      'Cancel Linking',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          Expanded(
+            child: ClipRect(
+              child: LayoutBuilder(
+                builder: (context, constraints) => DragTarget<CreativeObject>(
+                  onAcceptWithDetails: (details) {
+                    final box = context.findRenderObject() as RenderBox;
+                    final point = transform.toScene(
+                      box.globalToLocal(details.offset),
+                    );
+                    add(
+                      source: details.data,
+                      point: Offset(
+                        point.dx.clamp(50, 2700),
+                        point.dy.clamp(50, 1750),
+                      ),
+                    );
                   },
-                  child: GestureDetector(
-                    onDoubleTapDown: (details) {
-                      final box = context.findRenderObject() as RenderBox;
-                      final localPos = box.globalToLocal(
-                        details.globalPosition,
-                      );
-                      final scenePos = transform.toScene(localPos);
-                      add(
-                        point: Offset(
-                          scenePos.dx.clamp(50, 2700),
-                          scenePos.dy.clamp(50, 1750),
-                        ),
-                      );
-                    },
-                    onTap: () {
-                      if (connecting) {
-                        setState(() => connecting = false);
-                      }
-                    },
-                    child: InteractiveViewer(
-                      transformationController: transform,
-                      constrained: false,
-                      boundaryMargin: const EdgeInsets.all(500),
-                      minScale: .25,
-                      maxScale: 2.5,
-                      child: SizedBox(
-                        width: 3200,
-                        height: 2200,
-                        child: Stack(
-                          children: [
-                            Positioned.fill(
-                              child: CustomPaint(
-                                painter: BoardPainter(
-                                  nodes: nodes,
-                                  selectedId: selected,
-                                  connecting: connecting,
-                                  connectingSourceId: selected,
-                                  mousePoint: mouseScenePoint,
-                                ),
-                              ),
+                  builder: (context, candidates, rejected) => Container(
+                    color: candidates.isNotEmpty
+                        ? paleSage.withValues(alpha: .5)
+                        : canvasBg,
+                    child: MouseRegion(
+                      onHover: (event) {
+                        if (connecting) {
+                          setState(() {
+                            mouseScenePoint = transform.toScene(
+                              event.localPosition,
+                            );
+                          });
+                        }
+                      },
+                      child: GestureDetector(
+                        onDoubleTapDown: (details) {
+                          final box = context.findRenderObject() as RenderBox;
+                          final localPos = box.globalToLocal(
+                            details.globalPosition,
+                          );
+                          final scenePos = transform.toScene(localPos);
+                          add(
+                            point: Offset(
+                              scenePos.dx.clamp(50, 2700),
+                              scenePos.dy.clamp(50, 1750),
                             ),
-                            for (final o in nodes) _buildNodeCard(o),
-                          ],
+                          );
+                        },
+                        onTap: () {
+                          if (connecting) {
+                            setState(() => connecting = false);
+                          }
+                        },
+                        child: InteractiveViewer(
+                          transformationController: transform,
+                          constrained: false,
+                          boundaryMargin: const EdgeInsets.all(500),
+                          minScale: .25,
+                          maxScale: 2.5,
+                          child: SizedBox(
+                            width: 3200,
+                            height: 2200,
+                            child: Stack(
+                              children: [
+                                Positioned.fill(
+                                  child: CustomPaint(
+                                    painter: BoardPainter(
+                                      nodes: nodes,
+                                      selectedId: selected,
+                                      connecting: connecting,
+                                      connectingSourceId: selected,
+                                      mousePoint: mouseScenePoint,
+                                      dotColor: dotColor,
+                                    ),
+                                  ),
+                                ),
+                                for (final o in nodes)
+                                  _buildNodeCard(o, isDark, settings.themePreset),
+                              ],
+                            ),
+                          ),
                         ),
                       ),
                     ),
@@ -701,12 +714,16 @@ class _CanvasWorkspaceState extends State<CanvasWorkspace> {
               ),
             ),
           ),
-        ),
-      ),
-    ],
+        ],
+      );
+    },
   );
 
-  Widget _buildNodeCard(CreativeObject o) {
+  Widget _buildNodeCard(
+    CreativeObject o, [
+    bool isDark = false,
+    StudioThemePreset preset = StudioThemePreset.sage,
+  ]) {
     final cat = getCategoryFor(o);
     final isSelected = selected == o.id;
     final isMatch =
@@ -759,19 +776,21 @@ class _CanvasWorkspaceState extends State<CanvasWorkspace> {
           child: Container(
             width: 280,
             decoration: BoxDecoration(
-              color: cat.bgColor,
+              color: isDark
+                  ? Color.lerp(preset.paper, cat.accentColor, 0.16)!
+                  : cat.bgColor,
               borderRadius: BorderRadius.circular(10),
               border: Border.all(
                 color: isSelected
                     ? (connecting ? gold : cat.accentColor)
-                    : line,
+                    : (isDark ? const Color(0xFF384354) : line),
                 width: isSelected ? 2.5 : 1.2,
               ),
               boxShadow: [
                 BoxShadow(
                   color: isSelected
                       ? cat.accentColor.withValues(alpha: 0.25)
-                      : Colors.black.withValues(alpha: 0.06),
+                      : Colors.black.withValues(alpha: isDark ? 0.25 : 0.06),
                   offset: const Offset(0, 4),
                   blurRadius: isSelected ? 14 : 8,
                 ),
@@ -785,68 +804,77 @@ class _CanvasWorkspaceState extends State<CanvasWorkspace> {
                 Container(
                   padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
                   decoration: BoxDecoration(
-                    color: cat.accentColor.withValues(alpha: 0.08),
+                    color: cat.accentColor.withValues(alpha: isDark ? 0.18 : 0.08),
                     borderRadius: const BorderRadius.vertical(
                       top: Radius.circular(8),
                     ),
                     border: Border(
-                      bottom: BorderSide(color: line.withValues(alpha: 0.6)),
+                      bottom: BorderSide(
+                        color: (isDark ? const Color(0xFF384354) : line)
+                            .withValues(alpha: 0.6),
+                      ),
                     ),
                   ),
                   child: Row(
                     children: [
-                      PopupMenuButton<String>(
-                        tooltip: 'Change category',
-                        onSelected: (val) => _setCategory(o, val),
-                        itemBuilder: (context) => conceptCategories.map((c) {
-                          return PopupMenuItem<String>(
-                            value: c.id,
+                      Flexible(
+                        child: PopupMenuButton<String>(
+                          tooltip: 'Change category',
+                          onSelected: (val) => _setCategory(o, val),
+                          itemBuilder: (context) => conceptCategories.map((c) {
+                            return PopupMenuItem<String>(
+                              value: c.id,
+                              child: Row(
+                                children: [
+                                  Icon(c.icon, size: 15, color: c.accentColor),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    c.name,
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: cat.accentColor,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
                             child: Row(
+                              mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(c.icon, size: 15, color: c.accentColor),
-                                const SizedBox(width: 8),
-                                Text(
-                                  c.name,
-                                  style: const TextStyle(fontSize: 12),
+                                Icon(cat.icon, size: 12, color: Colors.white),
+                                const SizedBox(width: 4),
+                                Flexible(
+                                  child: Text(
+                                    cat.name.toUpperCase(),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: 0.6,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 2),
+                                const Icon(
+                                  Icons.arrow_drop_down,
+                                  size: 12,
+                                  color: Colors.white,
                                 ),
                               ],
                             ),
-                          );
-                        }).toList(),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 7,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: cat.accentColor,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(cat.icon, size: 12, color: Colors.white),
-                              const SizedBox(width: 4),
-                              Text(
-                                cat.name.toUpperCase(),
-                                style: const TextStyle(
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 0.6,
-                                  color: Colors.white,
-                                ),
-                              ),
-                              const SizedBox(width: 2),
-                              const Icon(
-                                Icons.arrow_drop_down,
-                                size: 12,
-                                color: Colors.white,
-                              ),
-                            ],
                           ),
                         ),
                       ),
-                      const Spacer(),
+                      const SizedBox(width: 4),
                       IconButton(
                         tooltip: editing == o.id
                             ? 'Finish editing'
@@ -1064,9 +1092,13 @@ class _CanvasWorkspaceState extends State<CanvasWorkspace> {
                                   vertical: 2,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: paper,
+                                  color: isDark ? preset.paper : paper,
                                   borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(color: line),
+                                  border: Border.all(
+                                    color: isDark
+                                        ? const Color(0xFF384354)
+                                        : line,
+                                  ),
                                 ),
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
@@ -1127,6 +1159,7 @@ class BoardPainter extends CustomPainter {
     this.connecting = false,
     this.connectingSourceId,
     this.mousePoint,
+    this.dotColor,
   });
 
   final List<CreativeObject> nodes;
@@ -1134,6 +1167,7 @@ class BoardPainter extends CustomPainter {
   final bool connecting;
   final String? connectingSourceId;
   final Offset? mousePoint;
+  final Color? dotColor;
 
   static const double cardWidth = 280.0;
   static const double cardHeight = 180.0;
@@ -1142,7 +1176,7 @@ class BoardPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     // 1. Subtle dotted background grid
     final dotPaint = Paint()
-      ..color = const Color(0xFF5B6E32).withValues(alpha: 0.2);
+      ..color = dotColor ?? const Color(0xFF5B6E32).withValues(alpha: 0.2);
     for (double x = 0; x < size.width; x += 28) {
       for (double y = 0; y < size.height; y += 28) {
         canvas.drawCircle(Offset(x, y), 1.0, dotPaint);
@@ -1303,12 +1337,14 @@ class FloatingItemOverlay extends StatefulWidget {
     required this.asset,
     required this.onClose,
     this.initialPosition,
+    this.deckCards,
   });
 
   final StudioStore store;
   final CreativeObject asset;
   final VoidCallback onClose;
   final Offset? initialPosition;
+  final List<CreativeObject>? deckCards;
 
   @override
   State<FloatingItemOverlay> createState() => _FloatingItemOverlayState();
@@ -1338,6 +1374,42 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
   bool isPlaying = true;
   Duration currentPos = Duration.zero;
   Duration totalDuration = Duration.zero;
+
+  int currentCardIndex = 0;
+
+  List<CreativeObject> get activeDeckCards {
+    if (widget.deckCards != null && widget.deckCards!.isNotEmpty) {
+      return widget.deckCards!;
+    }
+    if (widget.asset.kind == 'card') {
+      final deckId = widget.asset.meta['deckId']?.toString() ??
+          widget.asset.meta['source']?.toString() ??
+          widget.asset.meta['deck']?.toString() ??
+          widget.asset.meta['deckTitle']?.toString() ??
+          '';
+      final cards = widget.store.project.objects
+          .where((o) => o.kind == 'card')
+          .where((o) {
+            final id = o.meta['deckId']?.toString() ??
+                o.meta['source']?.toString() ??
+                o.meta['deck']?.toString() ??
+                o.meta['deckTitle']?.toString() ??
+                '';
+            return id == deckId;
+          })
+          .toList();
+      return cards.isNotEmpty ? cards : [widget.asset];
+    }
+    return [widget.asset];
+  }
+
+  CreativeObject get activeCard {
+    final cards = activeDeckCards;
+    if (currentCardIndex >= 0 && currentCardIndex < cards.length) {
+      return cards[currentCardIndex];
+    }
+    return cards.firstOrNull ?? widget.asset;
+  }
 
   bool get isVideo =>
       widget.asset.kind == 'asset' && widget.asset.meta['mediaType'] == 'video';
@@ -1385,8 +1457,11 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
       width = 460;
       height = 420;
     } else if (isFlashcard) {
-      width = 380;
-      height = 280;
+      width = 440;
+      height = 300;
+      final cards = activeDeckCards;
+      final idx = cards.indexWhere((c) => c.id == widget.asset.id);
+      currentCardIndex = idx >= 0 ? idx : 0;
     } else if (isDocument) {
       width = 520;
       height = 640;
@@ -1443,11 +1518,31 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
   @override
   Widget build(BuildContext context) {
     final screenSize = MediaQuery.sizeOf(context);
+    final outerMinHeight = 32.0;
     posX = posX.clamp(0.0, math.max(0.0, screenSize.width - width));
     posY = posY.clamp(
       0.0,
-      math.max(0.0, screenSize.height - (minimized ? 46.0 : height)),
+      math.max(0.0, screenSize.height - (minimized ? outerMinHeight : height)),
     );
+
+    final headerDisplayTitle = isFlashcard
+        ? () {
+            final card = activeCard;
+            final deckTitle = card.meta['deckTitle']?.toString().isNotEmpty == true
+                ? card.meta['deckTitle'].toString()
+                : card.meta['deck']?.toString().isNotEmpty == true
+                ? card.meta['deck'].toString()
+                : 'Flashcards';
+            final cards = activeDeckCards;
+            return cards.length > 1
+                ? '$deckTitle (${currentCardIndex + 1}/${cards.length})'
+                : card.title;
+          }()
+        : widget.asset.title;
+
+    final headerTagText = isFlashcard && activeDeckCards.length > 1
+        ? '${currentCardIndex + 1}/${activeDeckCards.length}'
+        : widget.asset.kind.toUpperCase();
 
     final headerIcon = isQuiz
         ? Icons.quiz_outlined
@@ -1463,83 +1558,112 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
         ? Icons.menu_book_outlined
         : Icons.sticky_note_2_outlined;
 
-    return Positioned(
-      left: posX,
-      top: posY,
-      child: Material(
-        elevation: 16,
-        shadowColor: ink.withValues(alpha: .35),
-        borderRadius: BorderRadius.circular(10),
-        color: isLightSurface ? paper : ink,
-        child: SizedBox(
-          width: width,
-          height: minimized ? 46 : height,
-          child: Stack(
-            children: [
-              Container(
-                width: width,
-                height: minimized ? 46 : height,
-                decoration: BoxDecoration(
-                  color: isLightSurface ? paper : ink,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: sage.withValues(alpha: .7),
-                    width: 1.5,
-                  ),
-                ),
-                child: Column(
-                  children: [
-                    GestureDetector(
-                      onPanUpdate: (d) {
-                        setState(() {
-                          posX += d.delta.dx;
-                          posY += d.delta.dy;
-                        });
-                      },
-                      child: Container(
-                        height: 42,
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        decoration: BoxDecoration(
-                          color: isLightSurface
-                              ? cream
-                              : Color.lerp(ink, Colors.black, .35)!,
-                          borderRadius: const BorderRadius.only(
-                            topLeft: Radius.circular(8),
-                            topRight: Radius.circular(8),
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              headerIcon,
-                              size: 15,
-                              color: isLightSurface ? sage : paleSage,
+    return ValueListenableBuilder<StudioSettings>(
+      valueListenable: studioSettingsNotifier,
+      builder: (context, settings, _) {
+        final isDark = settings.themePreset == StudioThemePreset.obsidian;
+        final themePreset = settings.themePreset;
+        final themePrimary = themePreset.primary;
+        final themePaper = themePreset.paper;
+        final themeInk = themePreset.ink;
+        final themeBg = themePreset.background;
+        final themeBorder = isDark
+            ? themePrimary.withValues(alpha: 0.75)
+            : themePrimary.withValues(alpha: 0.65);
+        final surfaceColor = isLightSurface
+            ? (isDark ? themePaper : paper)
+            : (isDark ? const Color(0xFF10141A) : ink);
+        final headerBg = isLightSurface
+            ? (isDark ? themeBg : cream)
+            : (isDark ? const Color(0xFF181F28) : Color.lerp(ink, Colors.black, .35)!);
+        final headerTextColor = isLightSurface
+            ? (isDark ? themeInk : ink)
+            : cream;
+        final headerIconColor = isLightSurface
+            ? (isDark ? themePrimary : sage)
+            : (isDark ? themePrimary.withValues(alpha: 0.9) : paleSage);
+        final headerTagColor = isLightSurface
+            ? (isDark ? themePrimary.withValues(alpha: 0.22) : paleSage)
+            : (isDark ? const Color(0xFF222832) : ink);
+
+        return Positioned(
+          left: posX,
+          top: posY,
+          child: Material(
+            elevation: isDark ? 10 : 16,
+            shadowColor: (isDark ? Colors.black : ink).withValues(alpha: isDark ? .6 : .35),
+            borderRadius: BorderRadius.circular(10),
+            color: surfaceColor,
+            child: SizedBox(
+              width: width,
+              height: minimized ? null : height,
+              child: Stack(
+                children: [
+                  Container(
+                    width: width,
+                    height: minimized ? null : height,
+                    decoration: BoxDecoration(
+                      color: surfaceColor,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: themeBorder,
+                        width: 0.85,
+                      ),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        GestureDetector(
+                          onPanUpdate: (d) {
+                            setState(() {
+                              posX += d.delta.dx;
+                              posY += d.delta.dy;
+                            });
+                          },
+                          child: Container(
+                            height: 30,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            decoration: BoxDecoration(
+                              color: headerBg,
+                              borderRadius: minimized
+                                  ? BorderRadius.circular(8)
+                                  : const BorderRadius.only(
+                                      topLeft: Radius.circular(8),
+                                      topRight: Radius.circular(8),
+                                    ),
                             ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                widget.asset.title,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                  color: isLightSurface ? ink : cream,
+                            child: Row(
+                              children: [
+                                Icon(
+                                  headerIcon,
+                                  size: 14,
+                                  color: headerIconColor,
                                 ),
-                              ),
-                            ),
-                            Tag(
-                              widget.asset.kind.toUpperCase(),
-                              color: isLightSurface ? paleSage : ink,
-                            ),
-                            const SizedBox(width: 6),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    headerDisplayTitle,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 10.5,
+                                      fontWeight: FontWeight.w600,
+                                      color: headerTextColor,
+                                    ),
+                                  ),
+                                ),
+                                Tag(
+                                  headerTagText,
+                                  color: headerTagColor,
+                                ),
+                            const SizedBox(width: 4),
                             IconButton(
                               tooltip: markdownPreview
                                   ? 'Edit markdown'
                                   : 'Preview markdown',
                               padding: EdgeInsets.zero,
                               constraints: const BoxConstraints(
-                                minWidth: 24,
-                                minHeight: 24,
+                                minWidth: 22,
+                                minHeight: 22,
                               ),
                               onPressed: isNote
                                   ? () => setState(
@@ -1550,96 +1674,98 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                                 markdownPreview
                                     ? Icons.edit_outlined
                                     : Icons.preview_outlined,
-                                size: 15,
+                                size: 14,
                                 color: isLightSurface ? muted : paleSage,
                               ),
                             ),
-                            IconButton(
-                              tooltip: 'Small (320px)',
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(
-                                minWidth: 24,
-                                minHeight: 24,
-                              ),
-                              onPressed: () => setState(() {
-                                width = 320;
-                                height = isQuiz
-                                    ? 340
-                                    : (isFlashcard
-                                          ? 240
-                                          : (isDocument
-                                                ? 420
-                                                : (isNote ? 260 : 210)));
-                                minimized = false;
-                              }),
-                              icon: Text(
-                                'S',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: isLightSurface ? muted : paleSage,
+                            if (width >= 420) ...[
+                              IconButton(
+                                tooltip: 'Small (320px)',
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(
+                                  minWidth: 20,
+                                  minHeight: 20,
+                                ),
+                                onPressed: () => setState(() {
+                                  width = 320;
+                                  height = isQuiz
+                                      ? 340
+                                      : (isFlashcard
+                                            ? 240
+                                            : (isDocument
+                                                  ? 420
+                                                  : (isNote ? 260 : 210)));
+                                  minimized = false;
+                                }),
+                                icon: Text(
+                                  'S',
+                                  style: TextStyle(
+                                    fontSize: 9.5,
+                                    color: isLightSurface ? muted : paleSage,
+                                  ),
                                 ),
                               ),
-                            ),
-                            IconButton(
-                              tooltip: 'Medium (460px)',
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(
-                                minWidth: 24,
-                                minHeight: 24,
-                              ),
-                              onPressed: () => setState(() {
-                                width = 460;
-                                height = isQuiz
-                                    ? 440
-                                    : (isFlashcard
-                                          ? 320
-                                          : (isDocument
-                                                ? 580
-                                                : (isNote ? 340 : 300)));
-                                minimized = false;
-                              }),
-                              icon: Text(
-                                'M',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: isLightSurface ? muted : paleSage,
+                              IconButton(
+                                tooltip: 'Medium (460px)',
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(
+                                  minWidth: 20,
+                                  minHeight: 20,
+                                ),
+                                onPressed: () => setState(() {
+                                  width = 460;
+                                  height = isQuiz
+                                      ? 440
+                                      : (isFlashcard
+                                            ? 320
+                                            : (isDocument
+                                                  ? 580
+                                                  : (isNote ? 340 : 300)));
+                                  minimized = false;
+                                }),
+                                icon: Text(
+                                  'M',
+                                  style: TextStyle(
+                                    fontSize: 9.5,
+                                    color: isLightSurface ? muted : paleSage,
+                                  ),
                                 ),
                               ),
-                            ),
-                            IconButton(
-                              tooltip: 'Large (640px)',
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(
-                                minWidth: 24,
-                                minHeight: 24,
-                              ),
-                              onPressed: () => setState(() {
-                                width = 640;
-                                height = isQuiz
-                                    ? 560
-                                    : (isFlashcard
-                                          ? 400
-                                          : (isDocument
-                                                ? 720
-                                                : (isNote ? 440 : 400)));
-                                minimized = false;
-                              }),
-                              icon: Text(
-                                'L',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: isLightSurface ? muted : paleSage,
+                              IconButton(
+                                tooltip: 'Large (640px)',
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(
+                                  minWidth: 20,
+                                  minHeight: 20,
+                                ),
+                                onPressed: () => setState(() {
+                                  width = 640;
+                                  height = isQuiz
+                                      ? 560
+                                      : (isFlashcard
+                                            ? 400
+                                            : (isDocument
+                                                  ? 720
+                                                  : (isNote ? 440 : 400)));
+                                  minimized = false;
+                                }),
+                                icon: Text(
+                                  'L',
+                                  style: TextStyle(
+                                    fontSize: 9.5,
+                                    color: isLightSurface ? muted : paleSage,
+                                  ),
                                 ),
                               ),
-                            ),
+                            ],
                             IconButton(
                               tooltip: minimized
                                   ? 'Expand window'
                                   : 'Minimize to bar',
                               padding: EdgeInsets.zero,
                               constraints: const BoxConstraints(
-                                minWidth: 26,
-                                minHeight: 26,
+                                minWidth: 22,
+                                minHeight: 22,
                               ),
                               onPressed: () =>
                                   setState(() => minimized = !minimized),
@@ -1647,7 +1773,7 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                                 minimized
                                     ? Icons.expand_less
                                     : Icons.expand_more,
-                                size: 16,
+                                size: 14,
                                 color: isLightSurface ? ink : paleSage,
                               ),
                             ),
@@ -1655,13 +1781,13 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                               tooltip: 'Close window',
                               padding: EdgeInsets.zero,
                               constraints: const BoxConstraints(
-                                minWidth: 26,
-                                minHeight: 26,
+                                minWidth: 22,
+                                minHeight: 22,
                               ),
                               onPressed: widget.onClose,
                               icon: Icon(
                                 Icons.close,
-                                size: 16,
+                                size: 14,
                                 color: isLightSurface ? ink : cream,
                               ),
                             ),
@@ -1703,8 +1829,16 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                                   ? _buildFloatingQuiz()
                                   : isFlashcard
                                   ? FlashcardFlipWidget(
-                                      card: widget.asset,
+                                      card: activeCard,
                                       compact: width < 420,
+                                      currentIndex: currentCardIndex,
+                                      totalCount: activeDeckCards.length,
+                                      onPrevious: currentCardIndex > 0
+                                          ? () => setState(() => currentCardIndex--)
+                                          : null,
+                                      onNext: currentCardIndex < activeDeckCards.length - 1
+                                          ? () => setState(() => currentCardIndex++)
+                                          : null,
                                     )
                                   : isDocument
                                   ? SourceReader(
@@ -1787,11 +1921,17 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                         ),
                       ),
                       Container(
-                        height: 38,
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                        color: isLightSurface
-                            ? line.withValues(alpha: .45)
-                            : Color.lerp(ink, Colors.black, .35)!,
+                        height: 26,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        decoration: BoxDecoration(
+                          color: isLightSurface
+                              ? line.withValues(alpha: .45)
+                              : Color.lerp(ink, Colors.black, .35)!,
+                          borderRadius: const BorderRadius.only(
+                            bottomLeft: Radius.circular(8),
+                            bottomRight: Radius.circular(8),
+                          ),
+                        ),
                         child: Row(
                           children: [
                             if (isVideo || isAudio) ...[
@@ -1799,29 +1939,32 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                                 tooltip: isPlaying ? 'Pause' : 'Play',
                                 padding: EdgeInsets.zero,
                                 constraints: const BoxConstraints(
-                                  minWidth: 28,
-                                  minHeight: 28,
+                                  minWidth: 22,
+                                  minHeight: 22,
                                 ),
                                 onPressed: () {
                                   if (player != null) player!.playOrPause();
                                 },
                                 icon: Icon(
                                   isPlaying ? Icons.pause : Icons.play_arrow,
-                                  size: 18,
+                                  size: 15,
                                   color: cream,
                                 ),
                               ),
                               Text(
                                 formatDuration(currentPos),
-                                style: TextStyle(fontSize: 10, color: paleSage),
+                                style: TextStyle(fontSize: 9.5, color: paleSage),
                               ),
                               Expanded(
                                 child: SliderTheme(
                                   data: SliderThemeData(
                                     thumbShape: const RoundSliderThumbShape(
-                                      enabledThumbRadius: 5,
+                                      enabledThumbRadius: 3.5,
                                     ),
-                                    trackHeight: 3,
+                                    overlayShape: const RoundSliderOverlayShape(
+                                      overlayRadius: 7.0,
+                                    ),
+                                    trackHeight: 2,
                                     activeTrackColor: gold,
                                     inactiveTrackColor: Colors.white24,
                                     thumbColor: cream,
@@ -1851,23 +1994,28 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                               ),
                               Text(
                                 formatDuration(totalDuration),
-                                style: TextStyle(fontSize: 10, color: paleSage),
+                                style: TextStyle(fontSize: 9.5, color: paleSage),
                               ),
                             ] else if (isImage) ...[
                               TextButton.icon(
+                                style: TextButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                                  minimumSize: const Size(20, 20),
+                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                ),
                                 onPressed: () {
                                   imageTransformController.value =
                                       Matrix4.identity();
                                 },
                                 icon: Icon(
                                   Icons.restart_alt,
-                                  size: 13,
+                                  size: 12,
                                   color: paleSage,
                                 ),
                                 label: Text(
                                   'Reset zoom',
                                   style: TextStyle(
-                                    fontSize: 10,
+                                    fontSize: 9.5,
                                     color: paleSage,
                                   ),
                                 ),
@@ -1877,8 +2025,8 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                                 tooltip: 'Copy image title',
                                 padding: EdgeInsets.zero,
                                 constraints: const BoxConstraints(
-                                  minWidth: 28,
-                                  minHeight: 28,
+                                  minWidth: 22,
+                                  minHeight: 22,
                                 ),
                                 onPressed: () {
                                   Clipboard.setData(
@@ -1887,7 +2035,7 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                                 },
                                 icon: Icon(
                                   Icons.copy,
-                                  size: 14,
+                                  size: 13,
                                   color: paleSage,
                                 ),
                               ),
@@ -1896,50 +2044,108 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
                                 child: Text(
                                   widget.asset.title,
                                   overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(fontSize: 10, color: muted),
+                                  style: TextStyle(fontSize: 9.5, color: muted),
                                 ),
                               ),
-                              const SizedBox(width: 8),
+                              const SizedBox(width: 6),
                               Tag('QUIZ', color: paleSage),
                             ] else if (isFlashcard) ...[
-                              Expanded(
-                                child: Text(
-                                  widget.asset.title,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(fontSize: 10, color: muted),
+                              IconButton(
+                                tooltip: 'Previous card',
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(
+                                  minWidth: 22,
+                                  minHeight: 22,
+                                ),
+                                onPressed: currentCardIndex > 0
+                                    ? () => setState(() => currentCardIndex--)
+                                    : null,
+                                icon: Icon(
+                                  Icons.arrow_back,
+                                  size: 14,
+                                  color: currentCardIndex > 0
+                                      ? (isLightSurface ? ink : cream)
+                                      : muted,
                                 ),
                               ),
-                              const SizedBox(width: 8),
+                              IconButton(
+                                tooltip: 'Next card',
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(
+                                  minWidth: 22,
+                                  minHeight: 22,
+                                ),
+                                onPressed: currentCardIndex < activeDeckCards.length - 1
+                                    ? () => setState(() => currentCardIndex++)
+                                    : null,
+                                icon: Icon(
+                                  Icons.arrow_forward,
+                                  size: 14,
+                                  color: currentCardIndex < activeDeckCards.length - 1
+                                      ? (isLightSurface ? ink : cream)
+                                      : muted,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                '${currentCardIndex + 1} of ${activeDeckCards.length}',
+                                style: TextStyle(
+                                  fontSize: 9.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: isLightSurface ? ink : cream,
+                                ),
+                              ),
+                              const Spacer(),
+                              IconButton(
+                                tooltip: 'Copy card question & answer',
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(
+                                  minWidth: 22,
+                                  minHeight: 22,
+                                ),
+                                onPressed: () {
+                                  final card = activeCard;
+                                  Clipboard.setData(
+                                    ClipboardData(text: 'Q: ${card.title}\nA: ${card.body}'),
+                                  );
+                                },
+                                icon: Icon(
+                                  Icons.copy,
+                                  size: 13,
+                                  color: isLightSurface ? ink : paleSage,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
                               Tag('CARD', color: paleSage),
                             ] else if (isDocument) ...[
                               Expanded(
                                 child: Text(
                                   widget.asset.title,
                                   overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(fontSize: 10, color: muted),
+                                  style: TextStyle(fontSize: 9.5, color: muted),
                                 ),
                               ),
-                              const SizedBox(width: 8),
+                              const SizedBox(width: 6),
                               Tag('DOCUMENT', color: paleSage),
                             ] else ...[
                               Text(
                                 '${widget.asset.body.trim().isEmpty ? 0 : widget.asset.body.trim().split(RegExp(r'\s+')).length} words',
-                                style: TextStyle(fontSize: 10, color: muted),
+                                style: TextStyle(fontSize: 9.5, color: muted),
                               ),
                               const Spacer(),
                               IconButton(
                                 tooltip: 'Copy note',
                                 padding: EdgeInsets.zero,
                                 constraints: const BoxConstraints(
-                                  minWidth: 28,
-                                  minHeight: 28,
+                                  minWidth: 22,
+                                  minHeight: 22,
                                 ),
                                 onPressed: () {
                                   Clipboard.setData(
                                     ClipboardData(text: widget.asset.body),
                                   );
                                 },
-                                icon: Icon(Icons.copy, size: 14, color: ink),
+                                icon: Icon(Icons.copy, size: 13, color: ink),
                               ),
                             ],
                           ],
@@ -2151,7 +2357,9 @@ class _FloatingItemOverlayState extends State<FloatingItemOverlay> {
         ),
       ),
     );
-  }
+  },
+);
+}
 
   Widget _buildFloatingQuiz() {
     try {
@@ -2223,78 +2431,94 @@ class StoryboardCard extends StatelessWidget {
     final duration = (shot.meta['duration'] as num? ?? 5.0).toDouble();
     final camera = shot.meta['camera'] as String? ?? 'Explanation';
 
-    return DragTarget<CreativeObject>(
-      onAcceptWithDetails: (d) {
-        if (d.data.id != shot.id && !shot.links.contains(d.data.id)) {
-          shot.links.add(d.data.id);
-          store.changed();
-        }
-      },
-      builder: (context, candidates, rejected) => Material(
-        color: candidates.isNotEmpty ? paleSage.withValues(alpha: .5) : paper,
-        borderRadius: BorderRadius.circular(9),
-        child: InkWell(
-          onTap: onTap,
-          onDoubleTap: onEdit,
-          borderRadius: BorderRadius.circular(9),
-          child: Container(
-            decoration: BoxDecoration(
-              border: Border.all(
-                color: selected ? sage : line,
-                width: selected ? 2 : 1,
-              ),
+    return ValueListenableBuilder<StudioSettings>(
+      valueListenable: studioSettingsNotifier,
+      builder: (context, settings, _) {
+        final isDark = settings.themePreset == StudioThemePreset.obsidian;
+        final themePreset = settings.themePreset;
+        final cardBg = isDark ? themePreset.paper : paper;
+        final cardBorder = selected
+            ? (isDark ? themePreset.primary : sage)
+            : (isDark ? const Color(0xFF2E3846) : line);
+        final placeholderBg = isDark ? const Color(0xFF1B222C) : const Color(0xFFE2E6DD);
+        final placeholderIconColor = isDark ? themePreset.primary : sage;
+
+        return DragTarget<CreativeObject>(
+          onAcceptWithDetails: (d) {
+            if (d.data.id != shot.id && !shot.links.contains(d.data.id)) {
+              shot.links.add(d.data.id);
+              store.changed();
+            }
+          },
+          builder: (context, candidates, rejected) => Material(
+            color: candidates.isNotEmpty
+                ? (isDark
+                    ? themePreset.primary.withValues(alpha: .25)
+                    : paleSage.withValues(alpha: .5))
+                : cardBg,
+            borderRadius: BorderRadius.circular(9),
+            child: InkWell(
+              onTap: onTap,
+              onDoubleTap: onEdit,
               borderRadius: BorderRadius.circular(9),
-              boxShadow: [
-                BoxShadow(
-                  color: ink.withValues(alpha: .04),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Stack(
-                  children: [
-                    Container(
-                      height: isGrid ? 170 : 130,
-                      width: double.infinity,
-                      clipBehavior: Clip.antiAlias,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFFE2E6DD),
-                        borderRadius: BorderRadius.only(
-                          topLeft: Radius.circular(8),
-                          topRight: Radius.circular(8),
-                        ),
-                      ),
-                      child: asset != null
-                          ? AssetThumbnail(
-                              store: store,
-                              asset: asset,
-                              fit: BoxFit.cover,
-                            )
-                          : Center(
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.panorama_outlined,
-                                    size: 28,
-                                    color: sage,
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    'Drop image or video here',
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      color: muted,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
+              child: Container(
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: cardBorder,
+                    width: selected ? 2 : 1,
+                  ),
+                  borderRadius: BorderRadius.circular(9),
+                  boxShadow: [
+                    BoxShadow(
+                      color: (isDark ? Colors.black : ink).withValues(alpha: isDark ? .25 : .04),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
                     ),
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Stack(
+                      children: [
+                        Container(
+                          height: isGrid ? 170 : 130,
+                          width: double.infinity,
+                          clipBehavior: Clip.antiAlias,
+                          decoration: BoxDecoration(
+                            color: placeholderBg,
+                            borderRadius: const BorderRadius.only(
+                              topLeft: Radius.circular(8),
+                              topRight: Radius.circular(8),
+                            ),
+                          ),
+                          child: asset != null
+                              ? AssetThumbnail(
+                                  store: store,
+                                  asset: asset,
+                                  fit: BoxFit.cover,
+                                )
+                              : Center(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.panorama_outlined,
+                                        size: 28,
+                                        color: placeholderIconColor,
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        'Drop image or video here',
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          color: muted,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                        ),
                     Positioned(
                       left: 10,
                       top: 10,
@@ -2438,5 +2662,7 @@ class StoryboardCard extends StatelessWidget {
         ),
       ),
     );
-  }
+  },
+);
+}
 }

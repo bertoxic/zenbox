@@ -1221,10 +1221,18 @@ class FlashcardFlipWidget extends StatefulWidget {
     super.key,
     required this.card,
     this.compact = false,
+    this.currentIndex,
+    this.totalCount,
+    this.onPrevious,
+    this.onNext,
   });
 
   final CreativeObject card;
   final bool compact;
+  final int? currentIndex;
+  final int? totalCount;
+  final VoidCallback? onPrevious;
+  final VoidCallback? onNext;
 
   @override
   State<FlashcardFlipWidget> createState() => _FlashcardFlipWidgetState();
@@ -1232,6 +1240,14 @@ class FlashcardFlipWidget extends StatefulWidget {
 
 class _FlashcardFlipWidgetState extends State<FlashcardFlipWidget> {
   bool isFlipped = false;
+
+  @override
+  void didUpdateWidget(covariant FlashcardFlipWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.card.id != widget.card.id) {
+      setState(() => isFlipped = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1264,6 +1280,28 @@ class _FlashcardFlipWidgetState extends State<FlashcardFlipWidget> {
                     ),
                   ),
                 ),
+                if (widget.currentIndex != null && widget.totalCount != null) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: paper,
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: line),
+                    ),
+                    child: Text(
+                      '${widget.currentIndex! + 1} / ${widget.totalCount}',
+                      style: TextStyle(
+                        fontSize: isCompact ? 9 : 10,
+                        fontWeight: FontWeight.w600,
+                        color: ink,
+                      ),
+                    ),
+                  ),
+                ],
                 const Spacer(),
                 Icon(Icons.flip, size: isCompact ? 14 : 18, color: muted),
                 const SizedBox(width: 4),
@@ -1275,33 +1313,59 @@ class _FlashcardFlipWidgetState extends State<FlashcardFlipWidget> {
             ),
             const SizedBox(height: 12),
             Expanded(
-              child: Center(
-                child: SingleChildScrollView(
-                  child: isFlipped
-                      ? Text(
-                          widget.card.body.trim().isEmpty
-                              ? 'No answer provided.'
-                              : widget.card.body,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: isCompact ? 13 : 16,
-                            color: ink,
-                            height: 1.4,
-                          ),
-                        )
-                      : Text(
-                          widget.card.title.trim().isEmpty
-                              ? 'Untitled Card'
-                              : widget.card.title,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: isCompact ? 15 : 18,
-                            fontWeight: FontWeight.w700,
-                            color: ink,
-                            height: 1.35,
-                          ),
-                        ),
-                ),
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  Center(
+                    child: SingleChildScrollView(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: (widget.onPrevious != null || widget.onNext != null) ? 36 : 12,
+                      ),
+                      child: isFlipped
+                          ? Text(
+                              widget.card.body.trim().isEmpty
+                                  ? 'No answer provided.'
+                                  : widget.card.body,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: isCompact ? 13 : 16,
+                                color: ink,
+                                height: 1.4,
+                              ),
+                            )
+                          : Text(
+                              widget.card.title.trim().isEmpty
+                                  ? 'Untitled Card'
+                                  : widget.card.title,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: isCompact ? 15 : 18,
+                                fontWeight: FontWeight.w700,
+                                color: ink,
+                                height: 1.35,
+                              ),
+                            ),
+                    ),
+                  ),
+                  if (widget.onPrevious != null)
+                    Positioned(
+                      left: 0,
+                      child: IconButton(
+                        tooltip: 'Previous card',
+                        icon: const Icon(Icons.chevron_left),
+                        onPressed: widget.onPrevious,
+                      ),
+                    ),
+                  if (widget.onNext != null)
+                    Positioned(
+                      right: 0,
+                      child: IconButton(
+                        tooltip: 'Next card',
+                        icon: const Icon(Icons.chevron_right),
+                        onPressed: widget.onNext,
+                      ),
+                    ),
+                ],
               ),
             ),
             const SizedBox(height: 8),
@@ -1315,6 +1379,305 @@ class _FlashcardFlipWidgetState extends State<FlashcardFlipWidget> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class FlashcardDeckModal extends StatefulWidget {
+  const FlashcardDeckModal({
+    super.key,
+    required this.cards,
+    required this.store,
+    this.initialIndex = 0,
+    this.onPopOut,
+  });
+
+  final List<CreativeObject> cards;
+  final StudioStore store;
+  final int initialIndex;
+  final VoidCallback? onPopOut;
+
+  static Future<void> show(
+    BuildContext context, {
+    required List<CreativeObject> cards,
+    required StudioStore store,
+    int initialIndex = 0,
+    VoidCallback? onPopOut,
+  }) {
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) => Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        backgroundColor: Colors.transparent,
+        child: FlashcardDeckModal(
+          cards: cards,
+          store: store,
+          initialIndex: initialIndex,
+          onPopOut: onPopOut,
+        ),
+      ),
+    );
+  }
+
+  @override
+  State<FlashcardDeckModal> createState() => _FlashcardDeckModalState();
+}
+
+class _FlashcardDeckModalState extends State<FlashcardDeckModal> {
+  late int currentIndex;
+  late List<CreativeObject> cardList;
+  bool isFlipped = false;
+
+  @override
+  void initState() {
+    super.initState();
+    cardList = List.from(widget.cards);
+    currentIndex = widget.initialIndex.clamp(0, cardList.isEmpty ? 0 : cardList.length - 1);
+  }
+
+  void nextCard() {
+    if (currentIndex < cardList.length - 1) {
+      setState(() {
+        currentIndex++;
+        isFlipped = false;
+      });
+    }
+  }
+
+  void previousCard() {
+    if (currentIndex > 0) {
+      setState(() {
+        currentIndex--;
+        isFlipped = false;
+      });
+    }
+  }
+
+  void shuffleCards() {
+    setState(() {
+      cardList.shuffle();
+      currentIndex = 0;
+      isFlipped = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (cardList.isEmpty) {
+      return Container(
+        width: 420,
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: paper,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: line),
+        ),
+        child: const Center(child: Text('No flashcards in this deck.')),
+      );
+    }
+
+    final card = cardList[currentIndex];
+    final deckTitle = card.meta['deckTitle']?.toString().isNotEmpty == true
+        ? card.meta['deckTitle'].toString()
+        : card.meta['source']?.toString().isNotEmpty == true
+        ? card.meta['source'].toString()
+        : card.meta['deck']?.toString().isNotEmpty == true
+        ? card.meta['deck'].toString()
+        : 'Flashcard Deck';
+
+    return Container(
+      width: 640,
+      height: 480,
+      decoration: BoxDecoration(
+        color: paper,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: line),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.18),
+            blurRadius: 24,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // Header
+          Container(
+            height: 48,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            decoration: BoxDecoration(
+              color: cream,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(14),
+                topRight: Radius.circular(14),
+              ),
+              border: Border(bottom: BorderSide(color: line)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.style_outlined, size: 18, color: gold),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    deckTitle,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: paper,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: line),
+                  ),
+                  child: Text(
+                    '${currentIndex + 1} of ${cardList.length}',
+                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                if (widget.onPopOut != null)
+                  IconButton(
+                    tooltip: 'Pop out in floating window',
+                    icon: const Icon(Icons.picture_in_picture_alt, size: 18),
+                    onPressed: () {
+                      Navigator.pop(context);
+                      widget.onPopOut!();
+                    },
+                  ),
+                IconButton(
+                  tooltip: 'Close',
+                  icon: const Icon(Icons.close, size: 18),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+          ),
+          // Progress Bar
+          LinearProgressIndicator(
+            value: (currentIndex + 1) / cardList.length,
+            backgroundColor: cream,
+            valueColor: AlwaysStoppedAnimation<Color>(gold),
+            minHeight: 3,
+          ),
+          // Body Flip Card
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () => setState(() => isFlipped = !isFlipped),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: cream.withValues(alpha: 0.7),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: line),
+                  ),
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: isFlipped ? paleSage : gold.withValues(alpha: 0.2),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              isFlipped ? 'ANSWER / BACK' : 'QUESTION / FRONT',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                color: ink,
+                              ),
+                            ),
+                          ),
+                          const Spacer(),
+                          Icon(Icons.flip, size: 16, color: muted),
+                          const SizedBox(width: 4),
+                          Text(
+                            isFlipped ? 'Click to show question' : 'Click to reveal answer',
+                            style: TextStyle(fontSize: 11, color: muted),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Expanded(
+                        child: Center(
+                          child: SingleChildScrollView(
+                            child: Text(
+                              isFlipped
+                                  ? (card.body.trim().isEmpty ? 'No answer provided.' : card.body)
+                                  : (card.title.trim().isEmpty ? 'Untitled Question' : card.title),
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: isFlipped ? 15 : 17,
+                                fontWeight: isFlipped ? FontWeight.normal : FontWeight.w700,
+                                color: ink,
+                                height: 1.45,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      Center(
+                        child: Text(
+                          isFlipped ? '↻ Tap card to flip back' : '↷ Tap card to flip',
+                          style: TextStyle(fontSize: 10, color: muted),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          // Footer Navigation Controls
+          Container(
+            height: 52,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            decoration: BoxDecoration(
+              color: cream.withValues(alpha: 0.5),
+              border: Border(top: BorderSide(color: line)),
+              borderRadius: const BorderRadius.only(
+                bottomLeft: Radius.circular(14),
+                bottomRight: Radius.circular(14),
+              ),
+            ),
+            child: Row(
+              children: [
+                OutlinedButton.icon(
+                  onPressed: shuffleCards,
+                  icon: const Icon(Icons.shuffle, size: 15),
+                  label: const Text('Shuffle', style: TextStyle(fontSize: 11)),
+                ),
+                const Spacer(),
+                OutlinedButton.icon(
+                  onPressed: currentIndex > 0 ? previousCard : null,
+                  icon: const Icon(Icons.arrow_back, size: 15),
+                  label: const Text('Previous', style: TextStyle(fontSize: 11)),
+                ),
+                const SizedBox(width: 10),
+                FilledButton.icon(
+                  style: FilledButton.styleFrom(backgroundColor: gold, foregroundColor: ink),
+                  onPressed: currentIndex < cardList.length - 1 ? nextCard : null,
+                  icon: const Icon(Icons.arrow_forward, size: 15),
+                  label: Text(
+                    currentIndex == cardList.length - 1 ? 'Finished' : 'Next',
+                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -1651,8 +1651,7 @@ Future<Map<String, dynamic>> executeAiTool(
   onNavigateStudio,
   FutureOr<void> Function(CreativeObject object)? onOpenObject,
   FutureOr<void> Function(Project project)? onProjectCreated,
-}) async {
-  if (!aiToolsEnabled(store))
+}) async {if (!aiToolsEnabled(store))
     return {'success': false, 'error': 'Tools are disabled.'};
   const batchFields = {
     'apply_workspace_changes': 'operations',
@@ -1702,6 +1701,7 @@ Future<Map<String, dynamic>> executeAiTool(
           );
       }
       if (result['success'] != true || failures.isNotEmpty) {
+        print("${failures}");
         return {
           'success': false,
           'rolledBack': true,

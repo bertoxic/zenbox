@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -54,6 +55,9 @@ class _DocumentEditorState extends State<DocumentEditor> {
   double textSize = 15;
   double pageZoom = 1.0;
   bool markdownPreview = false;
+  bool _rawMarkdownMode = false;
+  late final TextEditingController _markdownTextController =
+      TextEditingController();
   TextSelection selection = const TextSelection.collapsed(offset: 0);
 
   bool get script => widget.object.kind == 'script';
@@ -154,24 +158,30 @@ class _DocumentEditorState extends State<DocumentEditor> {
   /// not exist in that string, so turn image embeds into local Markdown image
   /// links while preserving their original position in the note.
   String markdownPreviewData() {
-    final output = StringBuffer();
-    for (final raw in controller.document.toDelta().toJson()) {
-      final insert = raw['insert'];
-      if (insert is String) {
-        output.write(insert);
-        continue;
-      }
-      if (insert is! Map) continue;
-      final embed = Map<String, dynamic>.from(insert);
-      final key = embed.isEmpty ? null : embed.keys.first;
-      if (key != 'studio-image') continue;
-      final data = _StudioImageEmbedData.parse(embed[key]);
-      final asset = widget.store.project.object(data.objectId);
-      if (asset == null) continue;
-      final path = widget.store.mediaPath(asset).replaceAll('\\', '/');
-      output.write('\n![${asset.title}]($path)\n');
+    return deltaToMarkdown(controller.document.toDelta());
+  }
+
+  void _syncRawMarkdownToDocument() {
+    final text = _markdownTextController.text;
+    final newDoc = q.Document.fromDelta(markdownToDelta(text));
+    syncing = true;
+    controller.document = newDoc;
+    savedDelta = jsonEncode(newDoc.toDelta().toJson());
+    storeDocument(widget.object, newDoc);
+    widget.store.changed();
+    syncing = false;
+  }
+
+  void toggleMarkdownView() {
+    if (markdownPreview && _rawMarkdownMode) {
+      _syncRawMarkdownToDocument();
     }
-    return output.toString();
+    setState(() {
+      markdownPreview = !markdownPreview;
+      if (markdownPreview) {
+        _markdownTextController.text = markdownPreviewData();
+      }
+    });
   }
 
   @override
@@ -199,6 +209,7 @@ class _DocumentEditorState extends State<DocumentEditor> {
 
   @override
   void dispose() {
+    _markdownTextController.dispose();
     selectionTimer?.cancel();
     controller.removeListener(changed);
     controller.dispose();
@@ -219,11 +230,25 @@ class _DocumentEditorState extends State<DocumentEditor> {
     focus.requestFocus();
   }
 
-  Future<void> pastePlainText() async {
+  void insertMarkdown(String value) {
+    final sel = controller.selection;
+    final at = sel.start.clamp(0, controller.document.length - 1);
+    final len = sel.isValid && !sel.isCollapsed ? sel.end - sel.start : 0;
+    final delta = markdownToDelta(value);
+    controller.replaceText(
+      at,
+      len,
+      delta,
+      TextSelection.collapsed(offset: at + delta.length),
+    );
+    focus.requestFocus();
+  }
+
+  Future<void> pasteMarkdown() async {
     final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
     final value = clipboard?.text;
     if (value == null || value.isEmpty) return;
-    insertText(value.replaceAll('\r\n', '\n'));
+    insertMarkdown(value.replaceAll('\r\n', '\n'));
   }
 
   void embed(CreativeObject object, {Offset? position}) {
@@ -235,7 +260,10 @@ class _DocumentEditorState extends State<DocumentEditor> {
                   controller.selection.start)
               .clamp(0, controller.document.length - 1);
 
-    if (object.kind == 'generation') {
+    if (object.kind == 'generation' ||
+        object.kind == 'note' ||
+        object.kind == 'research' ||
+        object.kind == 'evidence') {
       final markdown = markdownToDelta(object.body);
       controller.replaceText(
         at,
@@ -471,6 +499,16 @@ class _DocumentEditorState extends State<DocumentEditor> {
         onPressed: () => toggle(q.Attribute.underline),
         icon: const Icon(Icons.format_underlined, size: 18),
       ),
+      IconButton(
+        tooltip: 'Strikethrough',
+        onPressed: () => toggle(q.Attribute.strikeThrough),
+        icon: const Icon(Icons.format_strikethrough, size: 18),
+      ),
+      IconButton(
+        tooltip: 'Inline code',
+        onPressed: () => toggle(q.Attribute.inlineCode),
+        icon: const Icon(Icons.code, size: 18),
+      ),
       if (floating) ...[
         PopupMenuButton<String>(
           tooltip: 'Text color',
@@ -611,6 +649,34 @@ class _DocumentEditorState extends State<DocumentEditor> {
         ),
       ],
       if (!floating) ...[
+        PopupMenuButton<q.Attribute>(
+          tooltip: 'Heading style',
+          icon: const Icon(Icons.title, size: 17),
+          onSelected: toggle,
+          itemBuilder: (_) => const [
+            PopupMenuItem(
+              value: q.Attribute.h1,
+              child: Text(
+                'Heading 1',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+            ),
+            PopupMenuItem(
+              value: q.Attribute.h2,
+              child: Text(
+                'Heading 2',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+              ),
+            ),
+            PopupMenuItem(
+              value: q.Attribute.h3,
+              child: Text(
+                'Heading 3',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+              ),
+            ),
+          ],
+        ),
         IconButton(
           tooltip: 'Align left',
           onPressed: () => format(q.Attribute.leftAlignment),
@@ -625,6 +691,46 @@ class _DocumentEditorState extends State<DocumentEditor> {
           tooltip: 'Bullet list',
           onPressed: () => toggle(q.Attribute.ul),
           icon: const Icon(Icons.format_list_bulleted, size: 17),
+        ),
+        IconButton(
+          tooltip: 'Numbered list',
+          onPressed: () => toggle(q.Attribute.ol),
+          icon: const Icon(Icons.format_list_numbered, size: 17),
+        ),
+        IconButton(
+          tooltip: 'Checklist',
+          onPressed: () => toggle(q.Attribute.unchecked),
+          icon: const Icon(Icons.checklist, size: 17),
+        ),
+        IconButton(
+          tooltip: 'Quote',
+          onPressed: () => toggle(q.Attribute.blockQuote),
+          icon: const Icon(Icons.format_quote, size: 17),
+        ),
+        IconButton(
+          tooltip: 'Code block',
+          onPressed: () => toggle(q.Attribute.codeBlock),
+          icon: const Icon(Icons.data_object, size: 17),
+        ),
+        IconButton(
+          tooltip: 'Horizontal rule',
+          onPressed: () {
+            final at = controller.selection.start.clamp(0, controller.document.length - 1);
+            controller.replaceText(
+              at,
+              0,
+              q.BlockEmbed('divider', 'hr'),
+              TextSelection.collapsed(offset: at + 1),
+            );
+            controller.replaceText(
+              at + 1,
+              0,
+              '\n',
+              TextSelection.collapsed(offset: at + 2),
+            );
+            focus.requestFocus();
+          },
+          icon: const Icon(Icons.horizontal_rule, size: 17),
         ),
       ],
       InkWell(
@@ -914,13 +1020,12 @@ class _DocumentEditorState extends State<DocumentEditor> {
                       ),
                       IconButton(
                         tooltip: markdownPreview
-                            ? 'Edit markdown'
-                            : 'Preview markdown',
-                        onPressed: () =>
-                            setState(() => markdownPreview = !markdownPreview),
+                            ? 'Notes rich text'
+                            : 'Markdown view',
+                        onPressed: toggleMarkdownView,
                         icon: Icon(
                           markdownPreview
-                              ? Icons.edit_outlined
+                              ? Icons.edit_note
                               : Icons.preview_outlined,
                           size: 17,
                         ),
@@ -999,9 +1104,32 @@ class _DocumentEditorState extends State<DocumentEditor> {
                   ),
                 ),
               Expanded(
-                child: DragTarget<CreativeObject>(
-                  onWillAcceptWithDetails: (d) => d.data.id != widget.object.id,
-                  onAcceptWithDetails: (d) => embed(d.data, position: d.offset),
+                child: DragTarget<Object>(
+                  onWillAcceptWithDetails: (d) {
+                    if (d.data is CreativeObject) {
+                      return (d.data as CreativeObject).id != widget.object.id;
+                    }
+                    return d.data is String;
+                  },
+                  onAcceptWithDetails: (d) {
+                    if (d.data is CreativeObject) {
+                      embed(d.data as CreativeObject, position: d.offset);
+                    } else if (d.data is String) {
+                      final at = (editorKey.currentState?.renderEditor
+                                    .getPositionForOffset(d.offset)
+                                    .offset ??
+                                controller.selection.start)
+                            .clamp(0, controller.document.length - 1);
+                      final delta = markdownToDelta(d.data as String);
+                      controller.replaceText(
+                        at,
+                        0,
+                        delta,
+                        TextSelection.collapsed(offset: at + delta.length),
+                      );
+                      focus.requestFocus();
+                    }
+                  },
                   builder: (context, candidates, rejected) => Container(
                     color: candidates.isEmpty
                         ? cream
@@ -1027,15 +1155,156 @@ class _DocumentEditorState extends State<DocumentEditor> {
                                   fit: StackFit.expand,
                                   children: [
                                     if (markdownPreview)
-                                      SingleChildScrollView(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 48,
-                                          vertical: 40,
-                                        ),
-                                        child: MarkdownView(
-                                          data: markdownPreviewData(),
-                                          selectable: true,
-                                        ),
+                                      Column(
+                                        children: [
+                                          Container(
+                                            height: 42,
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 24,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: paper,
+                                              border: Border(
+                                                bottom: BorderSide(color: line),
+                                              ),
+                                            ),
+                                            child: Row(
+                                              children: [
+                                                Icon(
+                                                  Icons.code,
+                                                  size: 16,
+                                                  color: sage,
+                                                ),
+                                                const SizedBox(width: 8),
+                                                const Text(
+                                                  'Markdown',
+                                                  style: TextStyle(
+                                                    fontSize: 12,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 16),
+                                                SegmentedButton<bool>(
+                                                  segments: const [
+                                                    ButtonSegment(
+                                                      value: false,
+                                                      label: Text(
+                                                        'Preview',
+                                                        style: TextStyle(
+                                                          fontSize: 11,
+                                                        ),
+                                                      ),
+                                                      icon: Icon(
+                                                        Icons
+                                                            .visibility_outlined,
+                                                        size: 14,
+                                                      ),
+                                                    ),
+                                                    ButtonSegment(
+                                                      value: true,
+                                                      label: Text(
+                                                        'Raw Syntax',
+                                                        style: TextStyle(
+                                                          fontSize: 11,
+                                                        ),
+                                                      ),
+                                                      icon: Icon(
+                                                        Icons.code,
+                                                        size: 14,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                  selected: {_rawMarkdownMode},
+                                                  onSelectionChanged: (set) {
+                                                    setState(() {
+                                                      _rawMarkdownMode =
+                                                          set.first;
+                                                      if (_rawMarkdownMode) {
+                                                        _markdownTextController
+                                                                .text =
+                                                            markdownPreviewData();
+                                                      } else {
+                                                        _syncRawMarkdownToDocument();
+                                                      }
+                                                    });
+                                                  },
+                                                  style: const ButtonStyle(
+                                                    visualDensity:
+                                                        VisualDensity.compact,
+                                                    tapTargetSize:
+                                                        MaterialTapTargetSize
+                                                            .shrinkWrap,
+                                                  ),
+                                                ),
+                                                const Spacer(),
+                                                TextButton.icon(
+                                                  onPressed: () {
+                                                    final text =
+                                                        _rawMarkdownMode
+                                                            ? _markdownTextController
+                                                                .text
+                                                            : markdownPreviewData();
+                                                    Clipboard.setData(
+                                                      ClipboardData(text: text),
+                                                    );
+                                                  },
+                                                  icon: const Icon(
+                                                    Icons.copy,
+                                                    size: 14,
+                                                  ),
+                                                  label: const Text(
+                                                    'Copy Markdown',
+                                                    style: TextStyle(
+                                                      fontSize: 11,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          Expanded(
+                                            child: _rawMarkdownMode
+                                                ? Padding(
+                                                    padding:
+                                                        const EdgeInsets.symmetric(
+                                                          horizontal: 48,
+                                                          vertical: 24,
+                                                        ),
+                                                    child: TextField(
+                                                      controller:
+                                                          _markdownTextController,
+                                                      maxLines: null,
+                                                      expands: true,
+                                                      style: const TextStyle(
+                                                        fontFamily: 'Consolas',
+                                                        fontSize: 13,
+                                                        height: 1.6,
+                                                      ),
+                                                      decoration:
+                                                          const InputDecoration(
+                                                            border: InputBorder
+                                                                .none,
+                                                            hintText:
+                                                                'Enter Markdown here...',
+                                                          ),
+                                                      onChanged: (_) =>
+                                                          _syncRawMarkdownToDocument(),
+                                                    ),
+                                                  )
+                                                : SingleChildScrollView(
+                                                    padding:
+                                                        const EdgeInsets.symmetric(
+                                                          horizontal: 48,
+                                                          vertical: 40,
+                                                        ),
+                                                    child: MarkdownView(
+                                                      data:
+                                                          markdownPreviewData(),
+                                                      selectable: true,
+                                                    ),
+                                                  ),
+                                          ),
+                                        ],
                                       )
                                     else
                                       Listener(
@@ -1048,7 +1317,7 @@ class _DocumentEditorState extends State<DocumentEditor> {
                                             const SingleActivator(
                                               LogicalKeyboardKey.keyV,
                                               control: true,
-                                            ): pastePlainText,
+                                            ): pasteMarkdown,
                                           },
                                           child: q.QuillEditor(
                                             controller: controller,
@@ -1064,6 +1333,9 @@ class _DocumentEditorState extends State<DocumentEditor> {
                                               placeholder:
                                                   'Write, select text for interactive tools, or drop assets here…',
                                               embedBuilders: [
+                                                DividerEmbedBuilder(),
+                                                TableEmbedBuilder(),
+                                                MarkdownImageEmbedBuilder(),
                                                 StudioImageEmbedBuilder(
                                                   store: widget.store,
                                                   project: widget.store.project,
@@ -1106,13 +1378,32 @@ class _DocumentEditorState extends State<DocumentEditor> {
                                                       null,
                                                     ),
                                               ),
-                                              contextMenuBuilder: (context, state) =>
-                                                  AdaptiveTextSelectionToolbar.buttonItems(
-                                                    anchors: state
-                                                        .contextMenuAnchors,
-                                                    buttonItems: state
-                                                        .contextMenuButtonItems,
-                                                  ),
+                                              contextMenuBuilder: (context, state) {
+                                                final items = state
+                                                    .contextMenuButtonItems
+                                                    .map((item) {
+                                                      if (item.type ==
+                                                          ContextMenuButtonType
+                                                              .paste) {
+                                                        return ContextMenuButtonItem(
+                                                          type: ContextMenuButtonType
+                                                              .paste,
+                                                          label: item.label,
+                                                          onPressed: () {
+                                                            state.hideToolbar();
+                                                            pasteMarkdown();
+                                                          },
+                                                        );
+                                                      }
+                                                      return item;
+                                                    })
+                                                    .toList();
+                                                return AdaptiveTextSelectionToolbar.buttonItems(
+                                                  anchors: state
+                                                      .contextMenuAnchors,
+                                                  buttonItems: items,
+                                                );
+                                              },
                                             ),
                                           ),
                                         ),
@@ -1963,4 +2254,138 @@ class StudioEmbedBuilder extends q.EmbedBuilder {
       ),
     );
   }
+}
+
+class DividerEmbedBuilder extends q.EmbedBuilder {
+  @override
+  String get key => 'divider';
+
+  @override
+  Widget build(BuildContext context, q.EmbedContext embedContext) {
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 12),
+      child: Divider(color: line, thickness: 1.5),
+    );
+  }
+}
+
+class TableEmbedBuilder extends q.EmbedBuilder {
+  @override
+  String get key => 'table';
+
+  @override
+  Widget build(BuildContext context, q.EmbedContext embedContext) {
+    final raw = embedContext.node.value.data;
+    List<List<String>> rows = [];
+    if (raw is String) {
+      try {
+        final parsed = jsonDecode(raw) as List;
+        rows = parsed
+            .map((r) => (r as List).map((c) => c.toString()).toList())
+            .toList();
+      } catch (_) {}
+    } else if (raw is List) {
+      rows = raw
+          .map((r) => (r as List).map((c) => c.toString()).toList())
+          .toList();
+    }
+    if (rows.isEmpty) return const SizedBox.shrink();
+
+    final columns = rows.fold<int>(
+      0,
+      (count, row) => count > row.length ? count : row.length,
+    );
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 10),
+      decoration: BoxDecoration(
+        border: Border.all(color: line),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Table(
+        border: TableBorder.symmetric(inside: BorderSide(color: line)),
+        columnWidths: {
+          for (var index = 0; index < columns; index++)
+            index: const FlexColumnWidth(),
+        },
+        children: [
+          for (var rowIndex = 0; rowIndex < rows.length; rowIndex++)
+            TableRow(
+              decoration: BoxDecoration(
+                color: rowIndex == 0 ? paleSage.withValues(alpha: .7) : paper,
+              ),
+              children: [
+                for (var colIndex = 0; colIndex < columns; colIndex++)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 7,
+                    ),
+                    child: Text(
+                      colIndex < rows[rowIndex].length
+                          ? rows[rowIndex][colIndex]
+                          : '',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: ink,
+                        fontWeight: rowIndex == 0
+                            ? FontWeight.w700
+                            : FontWeight.normal,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class MarkdownImageEmbedBuilder extends q.EmbedBuilder {
+  @override
+  String get key => 'image';
+
+  @override
+  Widget build(BuildContext context, q.EmbedContext embedContext) {
+    final src = embedContext.node.value.data?.toString() ?? '';
+    if (src.isEmpty) return const SizedBox.shrink();
+    final isNetwork = src.startsWith('http://') || src.startsWith('https://');
+    Widget img;
+    if (isNetwork) {
+      img = Image.network(
+        src,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => _brokenImage(),
+      );
+    } else {
+      img = Image.file(
+        File(src),
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => _brokenImage(),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 320),
+          child: img,
+        ),
+      ),
+    );
+  }
+
+  Widget _brokenImage() => Container(
+    height: 60,
+    decoration: BoxDecoration(
+      color: sage.withValues(alpha: .08),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: Center(
+      child: Icon(Icons.broken_image_outlined, color: muted, size: 22),
+    ),
+  );
 }

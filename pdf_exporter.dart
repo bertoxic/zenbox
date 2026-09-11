@@ -129,6 +129,28 @@ class NotePdfExporter {
         if (key == 'studio-image' || key == 'studio-video') {
           flush(const {});
           result.add(_ExportBlock(media: _MediaEmbed.parse(embed[key])));
+        } else if (key == 'divider' || key == 'horizontal-rule') {
+          flush(const {});
+          result.add(const _ExportBlock());
+        } else if (key == 'table') {
+          flush(const {});
+          final raw = embed[key];
+          List<List<String>> tableRows = [];
+          if (raw is String) {
+            try {
+              final parsed = jsonDecode(raw) as List;
+              tableRows = parsed
+                  .map((row) => (row as List).map((c) => c.toString()).toList())
+                  .toList();
+            } catch (_) {}
+          } else if (raw is List) {
+            tableRows = raw
+                .map((row) => (row as List).map((c) => c.toString()).toList())
+                .toList();
+          }
+          if (tableRows.isNotEmpty) {
+            result.add(_ExportBlock(table: tableRows));
+          }
         }
       }
     }
@@ -333,6 +355,8 @@ class _RichNotePdfRenderer {
         final prefix = switch (list) {
           'bullet' => '• ',
           'ordered' => '${++orderedList}. ',
+          'unchecked' => '[ ] ',
+          'checked' => '[x] ',
           _ => '',
         };
         if (list == null) orderedList = 0;
@@ -358,7 +382,9 @@ class _RichNotePdfRenderer {
     _EmbeddedNoteFonts fonts,
     String prefix,
   ) {
-    final heading = (block.lineAttributes['heading'] as num?)?.toInt();
+    final heading = (block.lineAttributes['header'] as num? ??
+            block.lineAttributes['heading'] as num?)
+        ?.toInt();
     final quote = block.lineAttributes.containsKey('blockquote');
     final indent = (block.lineAttributes['indent'] as num?)?.toInt() ?? 0;
     final size = heading == null
@@ -733,7 +759,9 @@ class _PdfCanvas {
   }
 
   void addParagraph(_ExportBlock block) {
-    final heading = (block.lineAttributes['heading'] as num?)?.toInt();
+    final heading = (block.lineAttributes['header'] as num? ??
+            block.lineAttributes['heading'] as num?)
+        ?.toInt();
     final list = block.lineAttributes['list']?.toString();
     final quote = block.lineAttributes.containsKey('blockquote');
     final indent = (block.lineAttributes['indent'] as num?)?.toInt() ?? 0;
@@ -745,6 +773,8 @@ class _PdfCanvas {
     final prefix = switch (list) {
       'bullet' => '• ',
       'ordered' => '${++_orderedList}. ',
+      'unchecked' => '[ ] ',
+      'checked' => '[x] ',
       _ => '',
     };
     if (list == null) _orderedList = 0;

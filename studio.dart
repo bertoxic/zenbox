@@ -54,6 +54,11 @@ const dashboardWallpapers = [
   'assets/illustrations/dashboard_study_library.png',
   'assets/illustrations/dashboard_cozy_nook.png',
   'assets/illustrations/dashboard_note_arrangement.png',
+  'assets/illustrations/dashboard_courses.jpg',
+  'assets/illustrations/dashboard_concept_map.png',
+  'assets/illustrations/dashboard_flashcards.png',
+  'assets/illustrations/dashboard_headphones.png',
+  'assets/illustrations/dashboard_tea_break.png',
 ];
 
 class Studio extends StatefulWidget {
@@ -65,10 +70,15 @@ class Studio extends StatefulWidget {
 }
 
 class _FloatingWidgetEntry {
-  const _FloatingWidgetEntry({required this.id, required this.asset});
+  const _FloatingWidgetEntry({
+    required this.id,
+    required this.asset,
+    this.deckCards,
+  });
 
   final int id;
   final CreativeObject asset;
+  final List<CreativeObject>? deckCards;
 }
 
 class _StudioState extends State<Studio> with WidgetsBindingObserver {
@@ -122,6 +132,19 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
     setState(() {
       floatingWidgets.add(
         _FloatingWidgetEntry(id: _nextFloatingWidgetId++, asset: asset),
+      );
+    });
+  }
+
+  void openFloatingFlashcardDeck(List<CreativeObject> cards) {
+    if (cards.isEmpty) return;
+    setState(() {
+      floatingWidgets.add(
+        _FloatingWidgetEntry(
+          id: _nextFloatingWidgetId++,
+          asset: cards.first,
+          deckCards: cards,
+        ),
       );
     });
   }
@@ -543,9 +566,11 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
 
   Future<void> exportText(CreativeObject o) async {
     const ext = 'md';
+    final doc = readDocument(o);
+    final mdContent = deltaToMarkdown(doc.toDelta());
     final result = await FilePicker.saveFile(
       fileName: '${safeName(o.title)}.$ext',
-      bytes: Uint8List.fromList(utf8.encode(o.body)),
+      bytes: Uint8List.fromList(utf8.encode(mdContent)),
       dialogTitle: 'Export document as Markdown',
     );
     if (result != null) toast('Markdown exported: ${o.title}');
@@ -1070,6 +1095,7 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
                     key: ValueKey(floatingWidgets[index].id),
                     store: store,
                     asset: floatingWidgets[index].asset,
+                    deckCards: floatingWidgets[index].deckCards,
                     initialPosition: Offset(
                       120.0 + index * 28,
                       100.0 + index * 28,
@@ -1391,81 +1417,170 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-          child: Wrap(
-            runSpacing: 8,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const ListTile(
                 contentPadding: EdgeInsets.zero,
-                title: Text('Dashboard illustration'),
+                title: Text(
+                  'Dashboard illustration',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
                 subtitle: Text(
                   'Choose a Zenbox illustration or add your own image.',
                 ),
               ),
+              const SizedBox(height: 8),
               Wrap(
                 spacing: 10,
                 runSpacing: 10,
                 children: [
-                  for (final asset in dashboardWallpapers)
+                  for (final option in bundledDashboardIllustrations)
                     InkWell(
                       borderRadius: BorderRadius.circular(8),
                       onTap: () {
                         setState(() {
-                          project.layout['overviewWallpaperAsset'] = asset;
+                          project.layout['overviewWallpaperAsset'] =
+                              option.assetPath;
+                          project.layout['dashboardWallpaperAsset'] =
+                              option.assetPath;
                           project.layout.remove('overviewWallpaper');
+                          project.layout.remove('dashboardWallpaper');
                         });
+                        studioSettingsNotifier.value =
+                            studioSettingsNotifier.value.copyWith(
+                          dashboardWallpaperAsset: option.assetPath,
+                          clearDashboardWallpaper: true,
+                        );
                         saveLayout();
+                        store.changed();
                         Navigator.pop(context);
                       },
-                      child: Container(
-                        width: 118,
-                        height: 74,
-                        clipBehavior: Clip.antiAlias,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color:
-                                project.layout['overviewWallpaperAsset'] ==
-                                    asset
-                                ? sage
-                                : line,
-                            width:
-                                project.layout['overviewWallpaperAsset'] ==
-                                    asset
-                                ? 2
-                                : 1,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 120,
+                            height: 74,
+                            clipBehavior: Clip.antiAlias,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: (project.layout['overviewWallpaperAsset'] ??
+                                            project.layout['dashboardWallpaperAsset'] ??
+                                            studioSettingsNotifier.value.dashboardWallpaperAsset ??
+                                            defaultDashboardWallpaperAsset) ==
+                                        option.assetPath &&
+                                    (project.layout['overviewWallpaper'] == null &&
+                                        project.layout['dashboardWallpaper'] == null &&
+                                        studioSettingsNotifier.value.dashboardWallpaper == null)
+                                    ? sage
+                                    : line,
+                                width: (project.layout['overviewWallpaperAsset'] ??
+                                            project.layout['dashboardWallpaperAsset'] ??
+                                            studioSettingsNotifier.value.dashboardWallpaperAsset ??
+                                            defaultDashboardWallpaperAsset) ==
+                                        option.assetPath &&
+                                    (project.layout['overviewWallpaper'] == null &&
+                                        project.layout['dashboardWallpaper'] == null &&
+                                        studioSettingsNotifier.value.dashboardWallpaper == null)
+                                    ? 2.5
+                                    : 1,
+                              ),
+                            ),
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                Image.asset(option.assetPath, fit: BoxFit.cover),
+                                if ((project.layout['overviewWallpaperAsset'] ??
+                                            project.layout['dashboardWallpaperAsset'] ??
+                                            studioSettingsNotifier.value.dashboardWallpaperAsset ??
+                                            defaultDashboardWallpaperAsset) ==
+                                        option.assetPath &&
+                                    (project.layout['overviewWallpaper'] == null &&
+                                        project.layout['dashboardWallpaper'] == null &&
+                                        studioSettingsNotifier.value.dashboardWallpaper == null))
+                                  Positioned(
+                                    top: 4,
+                                    right: 4,
+                                    child: Container(
+                                      padding: const EdgeInsets.all(2),
+                                      decoration: BoxDecoration(
+                                        color: sage,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(
+                                        Icons.check,
+                                        size: 12,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
                           ),
-                        ),
-                        child: Image.asset(asset, fit: BoxFit.cover),
+                          const SizedBox(height: 4),
+                          SizedBox(
+                            width: 120,
+                            child: Text(
+                              option.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.add_photo_alternate_outlined),
-                title: const Text('Use my image…'),
+                title: const Text('Use custom image…'),
+                subtitle: const Text('Pick any JPG, PNG, or WEBP from your computer'),
                 onTap: () async {
                   final result = await FilePicker.pickFiles(
                     type: FileType.image,
                   );
                   if (result.isEmpty ||
                       result.single.path == null ||
-                      !context.mounted)
+                      !context.mounted) {
                     return;
+                  }
+                  final pickedPath = result.single.path!;
                   setState(() {
-                    project.layout['overviewWallpaper'] = result.single.path;
+                    project.layout['overviewWallpaper'] = pickedPath;
+                    project.layout['dashboardWallpaper'] = pickedPath;
                     project.layout.remove('overviewWallpaperAsset');
+                    project.layout.remove('dashboardWallpaperAsset');
                   });
+                  studioSettingsNotifier.value =
+                      studioSettingsNotifier.value.copyWith(
+                    dashboardWallpaper: pickedPath,
+                    clearDashboardWallpaperAsset: true,
+                  );
                   saveLayout();
+                  store.changed();
                   if (context.mounted) Navigator.pop(context);
                 },
               ),
               if (project.layout['overviewWallpaper'] != null ||
-                  project.layout['overviewWallpaperAsset'] != null)
+                  project.layout['dashboardWallpaper'] != null ||
+                  project.layout['overviewWallpaperAsset'] != null ||
+                  project.layout['dashboardWallpaperAsset'] != null ||
+                  studioSettingsNotifier.value.dashboardWallpaper != null ||
+                  studioSettingsNotifier.value.dashboardWallpaperAsset != null)
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.restart_alt),
@@ -1473,9 +1588,17 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
                   onTap: () {
                     setState(() {
                       project.layout.remove('overviewWallpaper');
+                      project.layout.remove('dashboardWallpaper');
                       project.layout.remove('overviewWallpaperAsset');
+                      project.layout.remove('dashboardWallpaperAsset');
                     });
+                    studioSettingsNotifier.value =
+                        studioSettingsNotifier.value.copyWith(
+                      clearDashboardWallpaper: true,
+                      clearDashboardWallpaperAsset: true,
+                    );
                     saveLayout();
+                    store.changed();
                     Navigator.pop(context);
                   },
                 ),
@@ -2026,10 +2149,15 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
                     child: IgnorePointer(
                       child: () {
                         final customPath =
-                            project.layout['overviewWallpaper'] as String?;
+                            project.layout['overviewWallpaper'] as String? ??
+                            project.layout['dashboardWallpaper'] as String? ??
+                            studioSettingsNotifier.value.dashboardWallpaper;
                         final illustration =
                             project.layout['overviewWallpaperAsset']
                                 as String? ??
+                            project.layout['dashboardWallpaperAsset']
+                                as String? ??
+                            studioSettingsNotifier.value.dashboardWallpaperAsset ??
                             dashboardWallpapers.first;
                         if (customPath != null && customPath.isNotEmpty) {
                           return Image.file(
@@ -4094,12 +4222,20 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
     final video = productionMode == 'Video';
     final current = selected?.kind == 'shot' ? selected : items.firstOrNull;
     final asset = current == null ? null : shotAsset(current);
-    return Column(
-      children: [
-        SectionHeading(
-          widget.studentMedia
-              ? 'Present what you understand'
-              : 'EXPLAIN & REMEMBER',
+    return ValueListenableBuilder<StudioSettings>(
+      valueListenable: studioSettingsNotifier,
+      builder: (context, settings, _) {
+        final isDark = settings.themePreset == StudioThemePreset.obsidian;
+        final themePreset = settings.themePreset;
+        final timelineBg = isDark ? const Color(0xFF161B22) : const Color(0xFFEAECE1);
+        final timelineBorder = isDark ? const Color(0xFF2E3846) : line;
+
+        return Column(
+          children: [
+            SectionHeading(
+              widget.studentMedia
+                  ? 'Present what you understand'
+                  : 'EXPLAIN & REMEMBER',
           widget.studentMedia
               ? (video
                     ? 'Presentation preview'
@@ -4333,8 +4469,8 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
           Container(
             height: 111,
             decoration: BoxDecoration(
-              color: Color(0xFFEAECE1),
-              border: Border(top: BorderSide(color: line)),
+              color: timelineBg,
+              border: Border(top: BorderSide(color: timelineBorder)),
             ),
             child: ReorderableListView.builder(
               scrollDirection: Axis.horizontal,
@@ -4364,9 +4500,13 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
                                 .clamp(105, 230),
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: current?.id == shot.id ? paleSage : paper,
+                          color: current?.id == shot.id
+                              ? (isDark ? themePreset.primary.withValues(alpha: 0.3) : paleSage)
+                              : (isDark ? themePreset.paper : paper),
                           border: Border.all(
-                            color: current?.id == shot.id ? sage : line,
+                            color: current?.id == shot.id
+                                ? (isDark ? themePreset.primary : sage)
+                                : (isDark ? const Color(0xFF2E3846) : line),
                           ),
                           borderRadius: BorderRadius.circular(5),
                         ),
@@ -4407,6 +4547,8 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
             ),
           ),
       ],
+    );
+      },
     );
   }
 
@@ -5165,6 +5307,386 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
                     const Divider(),
                     const SizedBox(height: 8),
                     Text(
+                      'DASHBOARD BANNER & ILLUSTRATION',
+                      style: TextStyle(
+                        fontSize: 10,
+                        letterSpacing: 1.5,
+                        fontWeight: FontWeight.bold,
+                        color: muted,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Choose a bundled Zenbox artwork or select a custom image from your device.',
+                      style: TextStyle(fontSize: 11, color: muted),
+                    ),
+                    const SizedBox(height: 12),
+                    () {
+                      final customWallpaper =
+                          project.layout['overviewWallpaper'] as String? ??
+                          project.layout['dashboardWallpaper'] as String? ??
+                          currentSettings.dashboardWallpaper;
+                      final currentAsset =
+                          project.layout['overviewWallpaperAsset'] as String? ??
+                          project.layout['dashboardWallpaperAsset'] as String? ??
+                          currentSettings.dashboardWallpaperAsset ??
+                          defaultDashboardWallpaperAsset;
+                      final isCustom =
+                          customWallpaper != null && customWallpaper.isNotEmpty;
+
+                      final activeOption = bundledDashboardIllustrations.firstWhere(
+                        (o) => o.assetPath == currentAsset,
+                        orElse: () => bundledDashboardIllustrations.first,
+                      );
+
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: sage.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: line),
+                            ),
+                            child: Row(
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: SizedBox(
+                                    width: 110,
+                                    height: 66,
+                                    child: isCustom
+                                        ? Image.file(
+                                            File(customWallpaper),
+                                            fit: BoxFit.cover,
+                                            errorBuilder: (_, __, ___) =>
+                                                Image.asset(
+                                              currentAsset,
+                                              fit: BoxFit.cover,
+                                            ),
+                                          )
+                                        : Image.asset(
+                                            currentAsset,
+                                            fit: BoxFit.cover,
+                                          ),
+                                  ),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 6,
+                                              vertical: 2,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: (isCustom
+                                                      ? Colors.teal
+                                                      : sage)
+                                                  .withValues(alpha: 0.2),
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
+                                            ),
+                                            child: Text(
+                                              isCustom
+                                                  ? 'CUSTOM IMAGE'
+                                                  : 'BUNDLED ARTWORK',
+                                              style: TextStyle(
+                                                fontSize: 9,
+                                                fontWeight: FontWeight.bold,
+                                                letterSpacing: 0.8,
+                                                color: isCustom
+                                                    ? Colors.teal.shade800
+                                                    : sage,
+                                              ),
+                                            ),
+                                          ),
+                                          const Spacer(),
+                                          if (isCustom ||
+                                              currentAsset !=
+                                                  defaultDashboardWallpaperAsset)
+                                            TextButton.icon(
+                                              style: TextButton.styleFrom(
+                                                visualDensity:
+                                                    VisualDensity.compact,
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                  horizontal: 8,
+                                                ),
+                                              ),
+                                              onPressed: () {
+                                                setState(() {
+                                                  project.layout.remove(
+                                                    'overviewWallpaper',
+                                                  );
+                                                  project.layout.remove(
+                                                    'dashboardWallpaper',
+                                                  );
+                                                  project.layout.remove(
+                                                    'overviewWallpaperAsset',
+                                                  );
+                                                  project.layout.remove(
+                                                    'dashboardWallpaperAsset',
+                                                  );
+                                                });
+                                                studioSettingsNotifier.value =
+                                                    currentSettings.copyWith(
+                                                  clearDashboardWallpaper: true,
+                                                  clearDashboardWallpaperAsset:
+                                                      true,
+                                                );
+                                                saveLayout();
+                                                store.changed();
+                                                setDialogState(() {});
+                                              },
+                                              icon: const Icon(
+                                                Icons.restart_alt,
+                                                size: 14,
+                                              ),
+                                              label: const Text(
+                                                'Reset',
+                                                style: TextStyle(fontSize: 11),
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        isCustom
+                                            ? File(customWallpaper)
+                                                    .uri
+                                                    .pathSegments
+                                                    .isNotEmpty
+                                                ? File(customWallpaper)
+                                                    .uri
+                                                    .pathSegments
+                                                    .last
+                                                : customWallpaper
+                                            : activeOption.title,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        isCustom
+                                            ? customWallpaper
+                                            : activeOption.description,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          color: muted,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            'BUNDLED ILLUSTRATIONS',
+                            style: TextStyle(
+                              fontSize: 9,
+                              letterSpacing: 1.2,
+                              fontWeight: FontWeight.w600,
+                              color: muted,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 10,
+                            runSpacing: 10,
+                            children: bundledDashboardIllustrations.map((option) {
+                              final isSelected = !isCustom &&
+                                  currentAsset == option.assetPath;
+                              return InkWell(
+                                borderRadius: BorderRadius.circular(8),
+                                onTap: () {
+                                  setState(() {
+                                    project.layout['overviewWallpaperAsset'] =
+                                        option.assetPath;
+                                    project.layout['dashboardWallpaperAsset'] =
+                                        option.assetPath;
+                                    project.layout.remove('overviewWallpaper');
+                                    project.layout.remove('dashboardWallpaper');
+                                  });
+                                  studioSettingsNotifier.value =
+                                      currentSettings.copyWith(
+                                    dashboardWallpaperAsset: option.assetPath,
+                                    clearDashboardWallpaper: true,
+                                  );
+                                  saveLayout();
+                                  store.changed();
+                                  setDialogState(() {});
+                                },
+                                child: Container(
+                                  width: 102,
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: isSelected ? sage : line,
+                                      width: isSelected ? 2 : 1,
+                                    ),
+                                    boxShadow: isSelected
+                                        ? [
+                                            BoxShadow(
+                                              color: sage.withValues(
+                                                alpha: 0.2,
+                                              ),
+                                              blurRadius: 4,
+                                              offset: const Offset(0, 1),
+                                            ),
+                                          ]
+                                        : null,
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      ClipRRect(
+                                        borderRadius: BorderRadius.circular(6),
+                                        child: SizedBox(
+                                          width: 94,
+                                          height: 56,
+                                          child: Stack(
+                                            fit: StackFit.expand,
+                                            children: [
+                                              Image.asset(
+                                                option.assetPath,
+                                                fit: BoxFit.cover,
+                                              ),
+                                              if (isSelected)
+                                                Positioned(
+                                                  top: 3,
+                                                  right: 3,
+                                                  child: Container(
+                                                    padding:
+                                                        const EdgeInsets.all(2),
+                                                    decoration: BoxDecoration(
+                                                      color: sage,
+                                                      shape: BoxShape.circle,
+                                                    ),
+                                                    child: const Icon(
+                                                      Icons.check,
+                                                      size: 11,
+                                                      color: Colors.white,
+                                                    ),
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        option.title,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: isSelected
+                                              ? FontWeight.w700
+                                              : FontWeight.w500,
+                                          color: isSelected ? ink : muted,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              OutlinedButton.icon(
+                                onPressed: () async {
+                                  final result =
+                                      await FilePicker.pickFiles(
+                                    type: FileType.image,
+                                  );
+                                  if (result.isEmpty ||
+                                      result.single.path == null) {
+                                    return;
+                                  }
+                                  final pickedPath = result.single.path!;
+                                  setState(() {
+                                    project.layout['overviewWallpaper'] =
+                                        pickedPath;
+                                    project.layout['dashboardWallpaper'] =
+                                        pickedPath;
+                                    project.layout.remove(
+                                      'overviewWallpaperAsset',
+                                    );
+                                    project.layout.remove(
+                                      'dashboardWallpaperAsset',
+                                    );
+                                  });
+                                  studioSettingsNotifier.value =
+                                      currentSettings.copyWith(
+                                    dashboardWallpaper: pickedPath,
+                                    clearDashboardWallpaperAsset: true,
+                                  );
+                                  saveLayout();
+                                  store.changed();
+                                  setDialogState(() {});
+                                },
+                                icon: const Icon(
+                                  Icons.add_photo_alternate_outlined,
+                                  size: 16,
+                                ),
+                                label: Text(
+                                  isCustom
+                                      ? 'Change custom image…'
+                                      : 'Choose custom image…',
+                                ),
+                              ),
+                              if (isCustom) ...[
+                                const SizedBox(width: 8),
+                                TextButton.icon(
+                                  onPressed: () {
+                                    setState(() {
+                                      project.layout.remove('overviewWallpaper');
+                                      project.layout.remove('dashboardWallpaper');
+                                    });
+                                    studioSettingsNotifier.value =
+                                        currentSettings.copyWith(
+                                      clearDashboardWallpaper: true,
+                                    );
+                                    saveLayout();
+                                    store.changed();
+                                    setDialogState(() {});
+                                  },
+                                  icon: const Icon(Icons.close, size: 14),
+                                  label: const Text(
+                                    'Remove custom image',
+                                    style: TextStyle(fontSize: 12),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ],
+                      );
+                    }(),
+                    const SizedBox(height: 20),
+                    const Divider(),
+                    const SizedBox(height: 8),
+                    Text(
                       'EDITOR & TYPOGRAPHY',
                       style: TextStyle(
                         fontSize: 10,
@@ -5178,6 +5700,7 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
                       children: [
                         Expanded(
                           child: DropdownButtonFormField<String>(
+                            isExpanded: true,
                             initialValue: currentSettings.editorFont,
                             decoration: const InputDecoration(
                               labelText: 'Primary Font',
@@ -5212,6 +5735,7 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
                         const SizedBox(width: 14),
                         Expanded(
                           child: DropdownButtonFormField<double>(
+                            isExpanded: true,
                             initialValue: currentSettings.editorLineHeight,
                             decoration: const InputDecoration(
                               labelText: 'Line Spacing',
@@ -5243,6 +5767,7 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
                     ),
                     const SizedBox(height: 14),
                     DropdownButtonFormField<int>(
+                      isExpanded: true,
                       initialValue: currentSettings.autoSaveSeconds,
                       decoration: const InputDecoration(
                         labelText: 'Autosave Cadence',
@@ -5287,6 +5812,7 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
                     ),
                     const SizedBox(height: 12),
                     DropdownButtonFormField<String>(
+                      isExpanded: true,
                       initialValue: currentSettings.aiPersona,
                       decoration: const InputDecoration(
                         labelText: 'Learning assistant style',
@@ -6188,7 +6714,7 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
                       ),
                       const SizedBox(height: 12),
                       for (final cards in flashcardGroups.values)
-                        _buildFlashcardDeckSection(cards),
+                        _buildFlashcardDeckWorkspaceItem(cards),
                     ],
                   ],
                 ),
@@ -6359,7 +6885,7 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildFlashcardDeckSection(List<CreativeObject> cards) {
+  Widget _buildFlashcardDeckWorkspaceItem(List<CreativeObject> cards) {
     final first = cards.first;
     String metadataText(String key) => first.meta[key]?.toString().trim() ?? '';
     final title = metadataText('deckTitle').isNotEmpty
@@ -6368,142 +6894,193 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
         ? metadataText('source')
         : metadataText('deck').isNotEmpty
         ? metadataText('deck')
-        : 'Ungrouped flashcards';
+        : 'Flashcard Deck';
     final description = metadataText('deckDescription').isNotEmpty
         ? metadataText('deckDescription')
         : '${cards.length} ${cards.length == 1 ? 'card' : 'cards'} in this deck';
+    final sourceTitle = metadataText('sourceTitle').isNotEmpty
+        ? metadataText('sourceTitle')
+        : metadataText('source');
+
     return Container(
-      margin: const EdgeInsets.only(bottom: 14),
+      margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         color: paper,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: line),
-      ),
-      child: ExpansionTile(
-        initiallyExpanded: false,
-        tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
-        childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-        leading: Container(
-          width: 34,
-          height: 34,
-          decoration: BoxDecoration(
-            color: gold.withValues(alpha: .14),
-            borderRadius: BorderRadius.circular(8),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
           ),
-          child: Icon(Icons.style_outlined, size: 18, color: gold),
-        ),
-        title: Text(
-          title,
-          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
-        ),
-        subtitle: Text(
-          description,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(fontSize: 10, color: muted),
-        ),
-        trailing: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-          decoration: BoxDecoration(
-            color: cream,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: line),
-          ),
-          child: Text(
-            '${cards.length}',
-            style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700),
-          ),
-        ),
-        children: [
-          for (var index = 0; index < cards.length; index++)
-            _buildFlashcardListItem(cards[index], index + 1),
         ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: () => FlashcardDeckModal.show(
+            context,
+            cards: cards,
+            store: store,
+            onPopOut: () => openFloatingFlashcardDeck(cards),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: gold.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(Icons.style_outlined, color: gold, size: 22),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: cream,
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: line),
+                            ),
+                            child: Text(
+                              '${cards.length} ${cards.length == 1 ? 'card' : 'cards'}',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: ink,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          if (sourceTitle.isNotEmpty) ...[
+                            const SizedBox(width: 8),
+                            Icon(Icons.source_outlined, size: 12, color: muted),
+                            const SizedBox(width: 3),
+                            Flexible(
+                              child: Text(
+                                sourceTitle,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 10, color: muted),
+                              ),
+                            ),
+                          ],
+                          if (description.isNotEmpty &&
+                              description !=
+                                  '${cards.length} ${cards.length == 1 ? 'card' : 'cards'} in this deck') ...[
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                description,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 10, color: muted),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: gold,
+                    foregroundColor: ink,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 8,
+                    ),
+                  ),
+                  onPressed: () => FlashcardDeckModal.show(
+                    context,
+                    cards: cards,
+                    store: store,
+                    onPopOut: () => openFloatingFlashcardDeck(cards),
+                  ),
+                  icon: const Icon(Icons.play_arrow, size: 16),
+                  label: const Text(
+                    'Study Deck',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                IconButton(
+                  tooltip: 'Pop out in floating window',
+                  iconSize: 18,
+                  icon: const Icon(Icons.picture_in_picture_alt),
+                  onPressed: () => openFloatingFlashcardDeck(cards),
+                ),
+                IconButton(
+                  tooltip: 'Delete deck',
+                  iconSize: 18,
+                  color: const Color(0xFFA54141),
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed: () => _confirmDeleteDeck(cards, title),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
 
-  Widget _buildFlashcardListItem(CreativeObject card, int number) => Container(
-    margin: const EdgeInsets.only(top: 8),
-    padding: const EdgeInsets.fromLTRB(12, 10, 6, 10),
-    decoration: BoxDecoration(
-      color: cream.withValues(alpha: .55),
-      borderRadius: BorderRadius.circular(8),
-      border: Border.all(color: line.withValues(alpha: .8)),
-    ),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: 25,
-          height: 25,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: paper,
-            shape: BoxShape.circle,
-            border: Border.all(color: line),
+  Future<void> _confirmDeleteDeck(List<CreativeObject> cards, String title) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete “$title”?'),
+        content: Text(
+          'This will delete all ${cards.length} flashcards in this deck. This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
           ),
-          child: Text(
-            '$number',
-            style: TextStyle(
-              fontSize: 9,
-              fontWeight: FontWeight.w700,
-              color: muted,
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFA54141),
             ),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete Deck'),
           ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                card.title,
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                card.body,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 10, height: 1.4, color: muted),
-              ),
-            ],
-          ),
-        ),
-        IconButton(
-          tooltip: 'Practise flashcard',
-          iconSize: 16,
-          onPressed: () => reviewCard(card),
-          icon: const Icon(Icons.school_outlined),
-        ),
-        IconButton(
-          tooltip: 'Open flashcard',
-          iconSize: 16,
-          visualDensity: VisualDensity.compact,
-          onPressed: () => openFloatingVideo(card),
-          icon: const Icon(Icons.open_in_new),
-        ),
-        IconButton(
-          tooltip: 'Edit card',
-          iconSize: 16,
-          visualDensity: VisualDensity.compact,
-          onPressed: () => edit(card),
-          icon: const Icon(Icons.edit_outlined),
-        ),
-        IconButton(
-          tooltip: 'Delete card',
-          iconSize: 16,
-          visualDensity: VisualDensity.compact,
-          color: const Color(0xFFA54141),
-          onPressed: () => remove(card),
-          icon: const Icon(Icons.delete_outline),
-        ),
-      ],
-    ),
-  );
+        ],
+      ),
+    );
+    if (confirm == true && mounted) {
+      for (final card in cards) {
+        store.project.objects.removeWhere((o) => o.id == card.id);
+      }
+      store.changed();
+      setState(() {});
+      toast('Deleted flashcard deck “$title”');
+    }
+  }
 }
 
 class _CommandPalette extends StatefulWidget {

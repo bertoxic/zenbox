@@ -5,15 +5,18 @@ import 'model.dart';
 
 q.Document readDocument(CreativeObject object) {
   final delta = object.meta['delta'];
-  if (delta is List) return q.Document.fromJson(List<dynamic>.from(delta));
-  return q.Document.fromJson([
-    {'insert': object.body.endsWith('\n') ? object.body : '${object.body}\n'},
-  ]);
+  if (delta is List && delta.isNotEmpty) {
+    return q.Document.fromJson(List<dynamic>.from(delta));
+  }
+  if (object.body.trim().isNotEmpty) {
+    return q.Document.fromDelta(markdownToDelta(object.body));
+  }
+  return q.Document();
 }
 
 void storeDocument(CreativeObject object, q.Document document) {
   object.meta['delta'] = document.toDelta().toJson();
-  object.body = document.toPlainText();
+  object.body = deltaToMarkdown(document.toDelta());
 }
 
 void replaceRange(
@@ -39,44 +42,110 @@ void replaceRange(
   storeDocument(object, doc);
 }
 
-/// Converts AI Markdown into Quill's native Delta format. This intentionally
-/// handles the common AI writing syntax directly instead of relying on an
-/// experimental converter that can reject partially streamed Markdown.
+/// Converts Markdown into Quill's native Delta format.
+/// Supports headings, bold, italic, strikethrough, inline code, underline,
+/// links, bullet/ordered lists, checklists, nested indentation, blockquotes,
+/// fenced code blocks, horizontal dividers, images, and tables.
 qd.Delta markdownToDelta(String markdown) {
   final delta = qd.Delta();
-  final lines = _flattenMarkdownTables(markdown).split('\n');
+  final normalized = markdown.replaceAll('\r\n', '\n');
+  final lines = normalized.split('\n');
   var inCodeBlock = false;
-  for (final rawLine in lines) {
+
+  for (var lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    final rawLine = lines[lineIndex];
     final trimmed = rawLine.trim();
-    if (trimmed.startsWith('```')) {
+
+    // Check for fenced code block toggle
+    if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) {
       inCodeBlock = !inCodeBlock;
       continue;
     }
+
+    if (inCodeBlock) {
+      delta.insert(rawLine);
+      delta.insert('\n', {'code-block': true});
+      continue;
+    }
+
+    // Check for Markdown table: header row followed by delimiter row
+    if (lineIndex + 1 < lines.length &&
+        trimmed.contains('|') &&
+        _isMarkdownTableDelimiter(lines[lineIndex + 1].trim())) {
+      final rows = <List<String>>[_markdownTableCells(trimmed)];
+      lineIndex += 2;
+      while (lineIndex < lines.length && lines[lineIndex].trim().contains('|')) {
+        rows.add(_markdownTableCells(lines[lineIndex].trim()));
+        lineIndex++;
+      }
+      lineIndex--;
+      delta.insert({'table': jsonEncode(rows)});
+      delta.insert('\n');
+      continue;
+    }
+
+    // Check for horizontal divider: ---, ***, ___
+    if (RegExp(r'^\s*([-*_])\s*(\1\s*){2,}\s*$').hasMatch(rawLine) &&
+        !trimmed.contains('|')) {
+      delta.insert({'divider': 'hr'});
+      delta.insert('\n');
+      continue;
+    }
+
+    // Check for standalone image: ![alt](url)
+    final standaloneImage =
+        RegExp(r'^\s*!\[(.*?)\]\((.*?)\)\s*$').firstMatch(trimmed);
+    if (standaloneImage != null) {
+      delta.insert({'image': standaloneImage.group(2)!});
+      delta.insert('\n');
+      continue;
+    }
+
+    // Parse leading indentation (2 spaces, 4 spaces, or tab per level)
+    final leadingSpaces = rawLine.length - rawLine.trimLeft().length;
+    final indentLevel = leadingSpaces >= 2 ? (leadingSpaces / 2).floor() : 0;
+
     final lineAttributes = <String, dynamic>{};
     var text = rawLine;
-    if (inCodeBlock) {
-      lineAttributes['code-block'] = true;
-    } else {
-      final heading = RegExp(r'^(#{1,6})\s+(.*)$').firstMatch(trimmed);
-      final ordered = RegExp(r'^\d+[.)]\s+(.*)$').firstMatch(trimmed);
-      final bullet = RegExp(r'^[-*+]\s+(.*)$').firstMatch(trimmed);
-      if (heading != null) {
-        text = heading.group(2)!;
-        lineAttributes['heading'] = heading.group(1)!.length;
-      } else if (ordered != null) {
-        text = ordered.group(1)!;
-        lineAttributes['list'] = 'ordered';
-      } else if (bullet != null) {
-        text = bullet.group(1)!;
-        lineAttributes['list'] = 'bullet';
-      } else if (trimmed.startsWith('> ')) {
-        text = trimmed.substring(2);
-        lineAttributes['blockquote'] = true;
-      }
+
+    final heading = RegExp(r'^(#{1,6})\s+(.*)$').firstMatch(trimmed);
+    final checklist =
+        RegExp(r'^[-*+]\s+\[([ xX])\]\s*(.*)$').firstMatch(trimmed);
+    final bullet = RegExp(r'^[-*+]\s+(.*)$').firstMatch(trimmed);
+    final ordered = RegExp(r'^\d+[.)]\s+(.*)$').firstMatch(trimmed);
+    final quote = RegExp(r'^(>+)\s*(.*)$').firstMatch(trimmed);
+
+    if (heading != null) {
+      final level = heading.group(1)!.length;
+      text = heading.group(2)!.trim();
+      // Strip trailing hashes if present (e.g. ## Heading ##)
+      text = text.replaceAll(RegExp(r'\s*#+$'), '');
+      lineAttributes['header'] = level;
+      lineAttributes['heading'] = level;
+    } else if (checklist != null) {
+      final isChecked = checklist.group(1)!.toLowerCase() == 'x';
+      text = checklist.group(2)!;
+      lineAttributes['list'] = isChecked ? 'checked' : 'unchecked';
+      if (indentLevel > 0) lineAttributes['indent'] = indentLevel;
+    } else if (bullet != null) {
+      text = bullet.group(1)!;
+      lineAttributes['list'] = 'bullet';
+      if (indentLevel > 0) lineAttributes['indent'] = indentLevel;
+    } else if (ordered != null) {
+      text = ordered.group(1)!;
+      lineAttributes['list'] = 'ordered';
+      if (indentLevel > 0) lineAttributes['indent'] = indentLevel;
+    } else if (quote != null) {
+      final quoteDepth = quote.group(1)!.length;
+      text = quote.group(2)!;
+      lineAttributes['blockquote'] = true;
+      if (quoteDepth > 1) lineAttributes['indent'] = quoteDepth - 1;
     }
+
     _insertMarkdownInline(delta, text);
     delta.insert('\n', lineAttributes.isEmpty ? null : lineAttributes);
   }
+
   return delta;
 }
 
@@ -96,8 +165,7 @@ void _insertMarkdownInline(
   int? formatted(String marker, Map<String, dynamic> style, int index) {
     final end = value.indexOf(marker, index + marker.length);
     if (end < 0) {
-      // AI responses can end with an unfinished marker. Treat its remaining
-      // text as formatted rather than exposing the raw Markdown token.
+      // Unfinished marker: degrade gracefully by treating text as styled
       flushPlain();
       _insertMarkdownInline(delta, value.substring(index + marker.length), {
         ...attributes,
@@ -116,31 +184,75 @@ void _insertMarkdownInline(
   var index = 0;
   while (index < value.length) {
     int? nextIndex;
-    if (value.startsWith('**', index)) {
+
+    // Inline image ![alt](url)
+    if (value.startsWith('![', index)) {
+      final labelEnd = value.indexOf('](', index + 2);
+      final urlEnd = labelEnd < 0 ? -1 : value.indexOf(')', labelEnd + 2);
+      if (labelEnd >= 0 && urlEnd >= 0) {
+        flushPlain();
+        final url = value.substring(labelEnd + 2, urlEnd);
+        delta.insert({'image': url});
+        index = urlEnd + 1;
+        continue;
+      }
+    }
+
+    // Bold + Italic: ***text*** or ___text___
+    if (value.startsWith('***', index)) {
+      nextIndex = formatted('***', const {'bold': true, 'italic': true}, index);
+    } else if (value.startsWith('___', index)) {
+      nextIndex = formatted('___', const {'bold': true, 'italic': true}, index);
+    }
+    // Bold: **text** or __text__
+    else if (value.startsWith('**', index)) {
       nextIndex = formatted('**', const {'bold': true}, index);
     } else if (value.startsWith('__', index)) {
-      // Zenbox accepts double underscores as an explicit underline shorthand.
-      nextIndex = formatted('__', const {'underline': true}, index);
-    } else if (value.startsWith('~~', index)) {
+      nextIndex = formatted('__', const {'bold': true}, index);
+    }
+    // Strikethrough: ~~text~~
+    else if (value.startsWith('~~', index)) {
       nextIndex = formatted('~~', const {'strike': true}, index);
-    } else if (value.startsWith('<u>', index)) {
+    }
+    // Underline: <u>text</u>
+    else if (value.startsWith('<u>', index)) {
       final end = value.indexOf('</u>', index + 3);
       if (end < 0) {
         plain.write('<u>');
+        index += 3;
+        continue;
       } else {
         flushPlain();
         _insertMarkdownInline(delta, value.substring(index + 3, end), {
           ...attributes,
           'underline': true,
         });
-        nextIndex = end + 4;
+        index = end + 4;
+        continue;
       }
-    } else if (value[index] == '*' || value[index] == '_') {
+    }
+    // Inline code: `code`
+    else if (value[index] == '`') {
+      final end = value.indexOf('`', index + 1);
+      if (end < 0) {
+        plain.write('`');
+        index += 1;
+        continue;
+      } else {
+        flushPlain();
+        final codeText = value.substring(index + 1, end);
+        delta.insert(codeText, {...attributes, 'code': true});
+        index = end + 1;
+        continue;
+      }
+    }
+    // Italic: *text* or _text_
+    else if (value[index] == '*' || value[index] == '_') {
       final marker = value[index];
       nextIndex = formatted(marker, const {'italic': true}, index);
-    } else if (value[index] == '`') {
-      nextIndex = formatted('`', const {'code': true}, index);
-    } else if (value[index] == '[') {
+    }
+    // Link: [text](url)
+    else if (value[index] == '[') {
       final labelEnd = value.indexOf('](', index + 1);
       final urlEnd = labelEnd < 0 ? -1 : value.indexOf(')', labelEnd + 2);
       if (labelEnd < 0 || urlEnd < 0) {
@@ -161,29 +273,325 @@ void _insertMarkdownInline(
   flushPlain();
 }
 
-/// Flutter Quill's Markdown converter has experimental table embeds, while the
-/// editor uses a custom embed set. Flatten standard Markdown tables to aligned,
-/// editable tab-separated lines instead of producing an unsupported embed.
-String _flattenMarkdownTables(String markdown) {
-  final lines = markdown.replaceAll('\r\n', '\n').split('\n');
-  final output = <String>[];
-  for (var index = 0; index < lines.length; index++) {
-    final current = lines[index].trim();
-    if (index + 1 < lines.length &&
-        current.contains('|') &&
-        _isMarkdownTableDelimiter(lines[index + 1].trim())) {
-      output.add('**${_markdownTableCells(current).join('    ')}**');
-      index += 2;
-      while (index < lines.length && lines[index].contains('|')) {
-        output.add(_markdownTableCells(lines[index].trim()).join('\t'));
-        index++;
+/// Converts a Quill Delta into clean, standard Markdown syntax.
+String deltaToMarkdown(qd.Delta delta) {
+  final lines = _splitDeltaIntoLines(delta);
+  final output = StringBuffer();
+  var inCodeBlock = false;
+  var orderedCounter = 0;
+
+  for (var i = 0; i < lines.length; i++) {
+    final line = lines[i];
+    final lineAttrs = line.lineAttributes;
+
+    // Fenced code blocks
+    final isCode = lineAttrs['code-block'] != null;
+    if (isCode) {
+      if (!inCodeBlock) {
+        if (output.isNotEmpty && !output.toString().endsWith('\n\n')) {
+          output.writeln();
+        }
+        output.writeln('```');
+        inCodeBlock = true;
       }
-      index--;
+      final codeText = line.spans.map((s) => s.plainText).join();
+      output.writeln(codeText);
+      continue;
+    } else if (inCodeBlock) {
+      output.writeln('```');
+      inCodeBlock = false;
+    }
+
+    // Reset ordered counter if leaving ordered list
+    final listType = lineAttrs['list']?.toString();
+    if (listType != 'ordered') {
+      orderedCounter = 0;
+    }
+
+    // Check for custom embeds on line
+    if (line.spans.length == 1 && line.spans.first.isEmbed) {
+      final embed = line.spans.first.embedData!;
+      final embedKey = embed.keys.first;
+
+      if (embedKey == 'divider' || embedKey == 'horizontal-rule') {
+        if (output.isNotEmpty && !output.toString().endsWith('\n\n')) {
+          output.writeln();
+        }
+        output.writeln('---');
+        continue;
+      }
+
+      if (embedKey == 'image') {
+        final src = embed[embedKey]?.toString() ?? '';
+        output.writeln('![]($src)');
+        continue;
+      }
+
+      if (embedKey == 'studio-image') {
+        final raw = embed[embedKey];
+        String title = 'Image';
+        String path = '';
+        if (raw is String) {
+          try {
+            final parsed = jsonDecode(raw);
+            title = parsed['title']?.toString() ?? 'Image';
+            path = parsed['id']?.toString() ?? '';
+          } catch (_) {
+            path = raw;
+          }
+        }
+        output.writeln('![$title]($path)');
+        continue;
+      }
+
+      if (embedKey == 'table') {
+        final raw = embed[embedKey];
+        List<List<String>> tableRows = [];
+        if (raw is String) {
+          try {
+            final parsed = jsonDecode(raw) as List;
+            tableRows = parsed
+                .map((row) => (row as List).map((c) => c.toString()).toList())
+                .toList();
+          } catch (_) {}
+        } else if (raw is List) {
+          tableRows = raw
+              .map((row) => (row as List).map((c) => c.toString()).toList())
+              .toList();
+        }
+        if (tableRows.isNotEmpty) {
+          if (output.isNotEmpty && !output.toString().endsWith('\n\n')) {
+            output.writeln();
+          }
+          output.write(_formatMarkdownTable(tableRows));
+          output.writeln();
+          continue;
+        }
+      }
+    }
+
+    // Headings
+    final header = (lineAttrs['header'] ?? lineAttrs['heading']) as num?;
+    if (header != null && header > 0) {
+      final hashes = '#' * header.toInt();
+      final content = _formatSpansToMarkdown(line.spans);
+      output.writeln('$hashes $content');
       continue;
     }
-    output.add(lines[index]);
+
+    // Lists
+    if (listType != null) {
+      final indent = (lineAttrs['indent'] as num?)?.toInt() ?? 0;
+      final indentPrefix = '  ' * indent;
+      final content = _formatSpansToMarkdown(line.spans);
+      switch (listType) {
+        case 'bullet':
+          output.writeln('$indentPrefix- $content');
+          break;
+        case 'ordered':
+          orderedCounter++;
+          output.writeln('$indentPrefix$orderedCounter. $content');
+          break;
+        case 'unchecked':
+          output.writeln('$indentPrefix- [ ] $content');
+          break;
+        case 'checked':
+          output.writeln('$indentPrefix- [x] $content');
+          break;
+        default:
+          output.writeln('$indentPrefix- $content');
+      }
+      continue;
+    }
+
+    // Blockquote
+    if (lineAttrs['blockquote'] == true) {
+      final indent = (lineAttrs['indent'] as num?)?.toInt() ?? 0;
+      final quotePrefix = '>' * (indent + 1) + ' ';
+      final content = _formatSpansToMarkdown(line.spans);
+      output.writeln('$quotePrefix$content');
+      continue;
+    }
+
+    // Normal paragraph or blank line
+    final content = _formatSpansToMarkdown(line.spans);
+    output.writeln(content);
   }
-  return output.join('\n');
+
+  if (inCodeBlock) {
+    output.writeln('```');
+  }
+
+  return output.toString().trimRight();
+}
+
+String _formatSpansToMarkdown(List<_DeltaSpan> spans) {
+  final merged = _mergeAdjacentSpans(spans);
+  final buffer = StringBuffer();
+
+  for (final span in merged) {
+    if (span.isEmbed) {
+      final embed = span.embedData!;
+      final key = embed.keys.first;
+      if (key == 'image') {
+        buffer.write('![](${embed[key]})');
+      }
+      continue;
+    }
+
+    final text = span.plainText;
+    if (text.isEmpty) continue;
+
+    final attrs = span.attributes;
+    final isCode = attrs['code'] == true;
+    if (isCode) {
+      buffer.write('`$text`');
+      continue;
+    }
+
+    // Extract whitespace to keep markdown markers tight around characters
+    final leading = RegExp(r'^\s*').stringMatch(text) ?? '';
+    final trailing = RegExp(r'\s*$').stringMatch(text) ?? '';
+    final core = text.substring(leading.length, text.length - trailing.length);
+
+    if (core.isEmpty) {
+      buffer.write(text);
+      continue;
+    }
+
+    var formatted = core;
+
+    if (attrs['underline'] == true) {
+      formatted = '<u>$formatted</u>';
+    }
+    if (attrs['strike'] == true) {
+      formatted = '~~$formatted~~';
+    }
+    final isBold = attrs['bold'] == true;
+    final isItalic = attrs['italic'] == true;
+    if (isBold && isItalic) {
+      formatted = '***$formatted***';
+    } else if (isBold) {
+      formatted = '**$formatted**';
+    } else if (isItalic) {
+      formatted = '*$formatted*';
+    }
+    if (attrs['link'] != null) {
+      formatted = '[$formatted](${attrs['link']})';
+    }
+
+    buffer.write('$leading$formatted$trailing');
+  }
+
+  return buffer.toString();
+}
+
+List<_DeltaSpan> _mergeAdjacentSpans(List<_DeltaSpan> spans) {
+  if (spans.length <= 1) return spans;
+  final result = <_DeltaSpan>[];
+
+  for (final span in spans) {
+    if (result.isNotEmpty &&
+        !span.isEmbed &&
+        !result.last.isEmbed &&
+        _mapsEqual(span.attributes, result.last.attributes)) {
+      final prev = result.removeLast();
+      result.add(_DeltaSpan('${prev.plainText}${span.plainText}', prev.attributes));
+    } else {
+      result.add(span);
+    }
+  }
+
+  return result;
+}
+
+bool _mapsEqual(Map<String, dynamic> a, Map<String, dynamic> b) {
+  if (a.length != b.length) return false;
+  for (final key in a.keys) {
+    if (a[key] != b[key]) return false;
+  }
+  return true;
+}
+
+List<_DeltaLine> _splitDeltaIntoLines(qd.Delta delta) {
+  final lines = <_DeltaLine>[];
+  var currentLine = _DeltaLine();
+
+  for (final raw in delta.toJson()) {
+    final insert = raw['insert'];
+    final attributes = Map<String, dynamic>.from(raw['attributes'] as Map? ?? {});
+
+    if (insert is String) {
+      final parts = insert.split('\n');
+      for (var i = 0; i < parts.length; i++) {
+        if (parts[i].isNotEmpty) {
+          currentLine.spans.add(_DeltaSpan(parts[i], attributes));
+        }
+        if (i < parts.length - 1) {
+          currentLine.lineAttributes = Map<String, dynamic>.from(attributes);
+          lines.add(currentLine);
+          currentLine = _DeltaLine();
+        }
+      }
+    } else if (insert is Map) {
+      currentLine.spans.add(
+        _DeltaSpan(Map<String, dynamic>.from(insert), attributes),
+      );
+    }
+  }
+
+  if (currentLine.spans.isNotEmpty || currentLine.lineAttributes.isNotEmpty) {
+    lines.add(currentLine);
+  }
+
+  return lines;
+}
+
+class _DeltaLine {
+  final List<_DeltaSpan> spans = [];
+  Map<String, dynamic> lineAttributes = {};
+}
+
+class _DeltaSpan {
+  _DeltaSpan(this.data, [Map<String, dynamic>? attrs])
+      : attributes = attrs ?? const {};
+
+  final dynamic data;
+  final Map<String, dynamic> attributes;
+
+  bool get isEmbed => data is Map;
+  Map<String, dynamic>? get embedData => data is Map ? data as Map<String, dynamic> : null;
+  String get plainText => data is String ? data as String : '';
+}
+
+String _formatMarkdownTable(List<List<String>> rows) {
+  if (rows.isEmpty) return '';
+  final colCount = rows.fold<int>(0, (max, row) => row.length > max ? row.length : max);
+  final buffer = StringBuffer();
+
+  // Header row
+  final header = rows.first;
+  final headerCells = List.generate(
+    colCount,
+    (i) => i < header.length ? header[i] : '',
+  );
+  buffer.writeln('| ${headerCells.join(' | ')} |');
+
+  // Delimiter row
+  final delimiters = List.generate(colCount, (_) => '---');
+  buffer.writeln('| ${delimiters.join(' | ')} |');
+
+  // Data rows
+  for (var r = 1; r < rows.length; r++) {
+    final row = rows[r];
+    final cells = List.generate(
+      colCount,
+      (i) => i < row.length ? row[i] : '',
+    );
+    buffer.writeln('| ${cells.join(' | ')} |');
+  }
+
+  return buffer.toString().trimRight();
 }
 
 bool _isMarkdownTableDelimiter(String line) =>
@@ -197,17 +605,25 @@ List<String> _markdownTableCells(String line) {
 }
 
 void appendText(CreativeObject object, String text) {
-  if (object.meta['delta'] != null ||
-      ['script', 'manuscript'].contains(object.kind)) {
-    final doc = readDocument(object);
-    // Retain the visual separation previous transfers had, but insert a Delta
-    // so all Markdown formatting is immediately editable in the note editor.
-    doc.insert(doc.length - 1, '\n');
-    doc.replace(doc.length - 1, 0, markdownToDelta(text));
-    storeDocument(object, doc);
-  } else {
-    object.body += '\n\n$text';
+  final doc = readDocument(object);
+  final newDelta = markdownToDelta(text);
+  if (doc.isEmpty() || doc.toPlainText().trim().isEmpty) {
+    storeDocument(object, q.Document.fromDelta(newDelta));
+    return;
   }
+  final docLength = doc.length;
+  final insertOffset = docLength > 0 ? docLength - 1 : 0;
+  final plain = doc.toPlainText();
+  if (insertOffset > 0 && !plain.endsWith('\n\n')) {
+    if (!plain.endsWith('\n')) {
+      doc.insert(insertOffset, '\n\n');
+    } else {
+      doc.insert(insertOffset, '\n');
+    }
+  }
+  final updatedOffset = doc.length - 1;
+  doc.replace(updatedOffset, 0, newDelta);
+  storeDocument(object, doc);
 }
 
 void setMarkdownDocument(CreativeObject object, String text) {
@@ -215,14 +631,14 @@ void setMarkdownDocument(CreativeObject object, String text) {
 }
 
 void prependText(CreativeObject object, String text) {
-  if (object.meta['delta'] != null ||
-      ['script', 'manuscript'].contains(object.kind)) {
-    final doc = readDocument(object);
-    doc.replace(0, 0, markdownToDelta('$text\n'));
-    storeDocument(object, doc);
-  } else {
-    object.body = object.body.isEmpty ? text : '$text\n\n${object.body}';
+  final doc = readDocument(object);
+  final newDelta = markdownToDelta('$text\n');
+  if (doc.isEmpty() || doc.toPlainText().trim().isEmpty) {
+    storeDocument(object, q.Document.fromDelta(newDelta));
+    return;
   }
+  doc.replace(0, 0, newDelta);
+  storeDocument(object, doc);
 }
 
 Map<String, dynamic> deepMap(Map<String, dynamic> value) =>

@@ -163,49 +163,98 @@ class MarkdownView extends StatelessWidget {
           ),
         );
       } else {
+        final leadingSpaces = raw.length - raw.trimLeft().length;
+        final indentLevel =
+            leadingSpaces >= 2 ? (leadingSpaces / 2).floor() : 0;
+        final checklist =
+            RegExp(r'^[-*+]\s+\[([ xX])\]\s*(.*)$').firstMatch(trimmed);
         final list = RegExp(
           r'^(?:[-*+]\s+|\d+[.)]\s+)(.*)$',
         ).firstMatch(trimmed);
-        widgets.add(
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (list != null)
-                Padding(
-                  padding: const EdgeInsets.only(right: 8, top: 2),
-                  child: Icon(
-                    trimmed.startsWith(RegExp(r'\d'))
-                        ? Icons.looks_one_outlined
-                        : Icons.circle,
-                    size: compact ? 7 : 8,
-                    color: sage,
-                  ),
-                ),
-              if (list != null)
-                Expanded(
-                  child: _rich(
-                    list.group(1)!,
-                    TextStyle(
-                      fontSize: compact ? 11 : 13,
-                      height: 1.6,
-                      color: ink,
+
+        if (checklist != null) {
+          final isChecked = checklist.group(1)!.toLowerCase() == 'x';
+          widgets.add(
+            Padding(
+              padding: EdgeInsets.only(
+                left: indentLevel * (compact ? 12.0 : 16.0),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6, top: 1),
+                    child: Icon(
+                      isChecked
+                          ? Icons.check_box
+                          : Icons.check_box_outline_blank,
+                      size: compact ? 12 : 15,
+                      color: isChecked ? sage : muted,
                     ),
                   ),
-                )
-              else
-                Expanded(
-                  child: _rich(
-                    trimmed,
-                    TextStyle(
-                      fontSize: compact ? 11 : 13,
-                      height: 1.65,
-                      color: ink,
+                  Expanded(
+                    child: _rich(
+                      checklist.group(2)!,
+                      TextStyle(
+                        fontSize: compact ? 11 : 13,
+                        height: 1.6,
+                        color: isChecked ? muted : ink,
+                        decoration:
+                            isChecked ? TextDecoration.lineThrough : null,
+                      ),
                     ),
                   ),
-                ),
-            ],
-          ),
-        );
+                ],
+              ),
+            ),
+          );
+        } else {
+          widgets.add(
+            Padding(
+              padding: EdgeInsets.only(
+                left: indentLevel * (compact ? 12.0 : 16.0),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (list != null)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8, top: 2),
+                      child: Icon(
+                        trimmed.startsWith(RegExp(r'\d'))
+                            ? Icons.looks_one_outlined
+                            : Icons.circle,
+                        size: compact ? 7 : 8,
+                        color: sage,
+                      ),
+                    ),
+                  if (list != null)
+                    Expanded(
+                      child: _rich(
+                        list.group(1)!,
+                        TextStyle(
+                          fontSize: compact ? 11 : 13,
+                          height: 1.6,
+                          color: ink,
+                        ),
+                      ),
+                    )
+                  else
+                    Expanded(
+                      child: _rich(
+                        trimmed,
+                        TextStyle(
+                          fontSize: compact ? 11 : 13,
+                          height: 1.65,
+                          color: ink,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          );
+        }
       }
     }
     if (inCode) flushCode();
@@ -291,17 +340,44 @@ class MarkdownView extends StatelessWidget {
 
   Widget _rich(String value, TextStyle base) {
     final spans = <InlineSpan>[];
-    final pattern = RegExp(r'(\*\*.+?\*\*|`.+?`|\*.+?\*)');
+    final pattern = RegExp(
+      r'(\*\*\*.+?\*\*\*|___.+?___|\*\*.+?\*\*|__.+?__|~~.+?~~|<u>.+?<\/u>|`.+?`|\*.+?\*|_.+?_|\[.+?\]\(.+?\))',
+    );
     var cursor = 0;
     for (final match in pattern.allMatches(value)) {
-      if (match.start > cursor)
+      if (match.start > cursor) {
         spans.add(TextSpan(text: value.substring(cursor, match.start)));
+      }
       final token = match.group(0)!;
-      if (token.startsWith('**')) {
+      if (token.startsWith('***') || token.startsWith('___')) {
+        spans.add(
+          TextSpan(
+            text: token.substring(3, token.length - 3),
+            style: const TextStyle(
+              fontWeight: FontWeight.w700,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        );
+      } else if (token.startsWith('**') || token.startsWith('__')) {
         spans.add(
           TextSpan(
             text: token.substring(2, token.length - 2),
             style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        );
+      } else if (token.startsWith('~~')) {
+        spans.add(
+          TextSpan(
+            text: token.substring(2, token.length - 2),
+            style: const TextStyle(decoration: TextDecoration.lineThrough),
+          ),
+        );
+      } else if (token.startsWith('<u>') && token.endsWith('</u>')) {
+        spans.add(
+          TextSpan(
+            text: token.substring(3, token.length - 4),
+            style: const TextStyle(decoration: TextDecoration.underline),
           ),
         );
       } else if (token.startsWith('`')) {
@@ -315,6 +391,19 @@ class MarkdownView extends StatelessWidget {
             ),
           ),
         );
+      } else if (token.startsWith('[') && token.contains('](')) {
+        final labelEnd = token.indexOf('](');
+        final label = token.substring(1, labelEnd);
+        spans.add(
+          TextSpan(
+            text: label,
+            style: TextStyle(
+              color: sage,
+              decoration: TextDecoration.underline,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        );
       } else {
         spans.add(
           TextSpan(
@@ -325,8 +414,9 @@ class MarkdownView extends StatelessWidget {
       }
       cursor = match.end;
     }
-    if (cursor < value.length)
+    if (cursor < value.length) {
       spans.add(TextSpan(text: value.substring(cursor)));
+    }
     final text = TextSpan(style: base, children: spans);
     return selectable ? SelectableText.rich(text) : Text.rich(text);
   }

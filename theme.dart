@@ -104,6 +104,74 @@ enum StudioThemePreset {
   final Color paper;
 }
 
+class DashboardIllustrationOption {
+  final String assetPath;
+  final String title;
+  final String description;
+
+  const DashboardIllustrationOption({
+    required this.assetPath,
+    required this.title,
+    required this.description,
+  });
+}
+
+const defaultDashboardWallpaperAsset =
+    'assets/illustrations/learning_workspace_hero.png';
+
+const bundledDashboardIllustrations = [
+  DashboardIllustrationOption(
+    assetPath: 'assets/illustrations/learning_workspace_hero.png',
+    title: 'Learning Workspace',
+    description: 'Modern focus desk with notes and morning light',
+  ),
+  DashboardIllustrationOption(
+    assetPath: 'assets/illustrations/dashboard_hero.jpg',
+    title: 'Hero Library',
+    description: 'Warm, classic library reading hall with arches',
+  ),
+  DashboardIllustrationOption(
+    assetPath: 'assets/illustrations/dashboard_study_library.png',
+    title: 'Study Library',
+    description: 'Quiet archive bookshelf with study desk',
+  ),
+  DashboardIllustrationOption(
+    assetPath: 'assets/illustrations/dashboard_cozy_nook.png',
+    title: 'Cozy Nook',
+    description: 'Comfortable reading armchair and soft lamplight',
+  ),
+  DashboardIllustrationOption(
+    assetPath: 'assets/illustrations/dashboard_note_arrangement.png',
+    title: 'Note Arrangement',
+    description: 'Structured index cards, diagrams, and outlines',
+  ),
+  DashboardIllustrationOption(
+    assetPath: 'assets/illustrations/dashboard_courses.jpg',
+    title: 'Course Stacks',
+    description: 'Academic syllabus textbooks and lecture notes',
+  ),
+  DashboardIllustrationOption(
+    assetPath: 'assets/illustrations/dashboard_concept_map.png',
+    title: 'Concept Map',
+    description: 'Connected mental models and visual knowledge graphs',
+  ),
+  DashboardIllustrationOption(
+    assetPath: 'assets/illustrations/dashboard_flashcards.png',
+    title: 'Flashcards & Recall',
+    description: 'Spaced repetition revision cards with timer',
+  ),
+  DashboardIllustrationOption(
+    assetPath: 'assets/illustrations/dashboard_headphones.png',
+    title: 'Focus & Audio',
+    description: 'Ambient soundscape and headphones study session',
+  ),
+  DashboardIllustrationOption(
+    assetPath: 'assets/illustrations/dashboard_tea_break.png',
+    title: 'Tea Break',
+    description: 'Mindful pause with herbal tea and open notebook',
+  ),
+];
+
 class StudioSettings {
   final StudioThemePreset themePreset;
   final String editorFont;
@@ -111,6 +179,8 @@ class StudioSettings {
   final int autoSaveSeconds;
   final String aiPersona;
   final bool typewriterEffect;
+  final String? dashboardWallpaper;
+  final String? dashboardWallpaperAsset;
 
   const StudioSettings({
     this.themePreset = StudioThemePreset.sage,
@@ -119,6 +189,8 @@ class StudioSettings {
     this.autoSaveSeconds = 15,
     this.aiPersona = 'Balanced Producer',
     this.typewriterEffect = true,
+    this.dashboardWallpaper,
+    this.dashboardWallpaperAsset,
   });
 
   StudioSettings copyWith({
@@ -128,6 +200,10 @@ class StudioSettings {
     int? autoSaveSeconds,
     String? aiPersona,
     bool? typewriterEffect,
+    String? dashboardWallpaper,
+    bool clearDashboardWallpaper = false,
+    String? dashboardWallpaperAsset,
+    bool clearDashboardWallpaperAsset = false,
   }) {
     return StudioSettings(
       themePreset: themePreset ?? this.themePreset,
@@ -136,6 +212,12 @@ class StudioSettings {
       autoSaveSeconds: autoSaveSeconds ?? this.autoSaveSeconds,
       aiPersona: aiPersona ?? this.aiPersona,
       typewriterEffect: typewriterEffect ?? this.typewriterEffect,
+      dashboardWallpaper: clearDashboardWallpaper
+          ? null
+          : (dashboardWallpaper ?? this.dashboardWallpaper),
+      dashboardWallpaperAsset: clearDashboardWallpaperAsset
+          ? null
+          : (dashboardWallpaperAsset ?? this.dashboardWallpaperAsset),
     );
   }
 }
