@@ -1969,25 +1969,65 @@ Future<Map<String, dynamic>> executeAiTool(
     _logAiTool('[inspect_workspace payload] ${jsonEncode(args)}');
   }
 
+  dynamic coerceJson(dynamic val) {
+    if (val is String) {
+      final trimmed = val.trim();
+      if ((trimmed.startsWith('[') && trimmed.endsWith(']')) ||
+          (trimmed.startsWith('{') && trimmed.endsWith('}'))) {
+        try {
+          return jsonDecode(trimmed);
+        } catch (_) {}
+      }
+    }
+    return val;
+  }
+
+  // Pre-coerce any JSON-encoded strings across all argument properties
+  for (final key in normalizedArgs.keys.toList()) {
+    normalizedArgs[key] = coerceJson(normalizedArgs[key]);
+  }
+
   // Unpack top-level raw list from model function calls if present
-  if (normalizedArgs['_rawList'] is List) {
-    final rawList = normalizedArgs['_rawList'] as List;
-    if (name == 'write_documents' || name == 'create_notes') {
-      normalizedArgs['documents'] ??= rawList;
-    } else if (name == 'create_flashcards') {
-      normalizedArgs['cards'] ??= rawList;
-    } else if (name == 'create_quiz') {
-      normalizedArgs['questions'] ??= rawList;
-    } else if (name == 'build_canvas' || name == 'create_concept_map') {
-      normalizedArgs['cards'] ??= rawList;
-    } else if (name == 'build_storyboard') {
-      normalizedArgs['shots'] ??= rawList;
-    } else if (name == 'apply_workspace_changes') {
-      normalizedArgs['operations'] ??= rawList;
-    } else if (name == 'record_story_bible') {
-      normalizedArgs['entries'] ??= rawList;
-    } else if (name == 'save_research') {
-      normalizedArgs['notes'] ??= rawList;
+  if (normalizedArgs['_rawList'] != null) {
+    final rawList = coerceJson(normalizedArgs['_rawList']);
+    if (rawList is List) {
+      if (name == 'write_documents' || name == 'create_notes') {
+        normalizedArgs['documents'] ??= rawList;
+      } else if (name == 'create_flashcards') {
+        normalizedArgs['cards'] ??= rawList;
+      } else if (name == 'create_quiz') {
+        normalizedArgs['questions'] ??= rawList;
+      } else if (name == 'build_canvas' || name == 'create_concept_map') {
+        normalizedArgs['cards'] ??= rawList;
+      } else if (name == 'build_storyboard') {
+        normalizedArgs['shots'] ??= rawList;
+      } else if (name == 'apply_workspace_changes') {
+        normalizedArgs['operations'] ??= rawList;
+      } else if (name == 'record_story_bible') {
+        normalizedArgs['entries'] ??= rawList;
+      } else if (name == 'save_research') {
+        normalizedArgs['notes'] ??= rawList;
+      }
+    }
+  }
+
+  // Gracefully normalize apply_workspace_changes
+  if (name == 'apply_workspace_changes') {
+    normalizedArgs['operations'] ??= normalizedArgs['changes'] ??
+        normalizedArgs['actions'] ??
+        normalizedArgs['ops'] ??
+        normalizedArgs['items'] ??
+        normalizedArgs['list'] ??
+        normalizedArgs['data'];
+    if (normalizedArgs['operations'] is Map) {
+      normalizedArgs['operations'] = [
+        Map<String, dynamic>.from(normalizedArgs['operations'] as Map)
+      ];
+    } else if (normalizedArgs['operations'] == null &&
+        normalizedArgs['action'] != null) {
+      normalizedArgs['operations'] = [
+        Map<String, dynamic>.from(normalizedArgs)
+      ];
     }
   }
 
@@ -1997,60 +2037,53 @@ Future<Map<String, dynamic>> executeAiTool(
       normalizedArgs['content'] = normalizedArgs['body'];
     }
     if (normalizedArgs['documents'] == null) {
-      if (normalizedArgs['document'] is Map) {
-        normalizedArgs['documents'] = [
-          Map<String, dynamic>.from(normalizedArgs['document'] as Map)
-        ];
-      } else if (normalizedArgs['notes'] is List) {
-        normalizedArgs['documents'] = normalizedArgs['notes'];
-      } else if (normalizedArgs['docs'] is List) {
-        normalizedArgs['documents'] = normalizedArgs['docs'];
-      } else if (normalizedArgs['items'] is List) {
-        normalizedArgs['documents'] = normalizedArgs['items'];
-      } else if (normalizedArgs['data'] is List) {
-        normalizedArgs['documents'] = normalizedArgs['data'];
-      } else if (normalizedArgs['entries'] is List) {
-        normalizedArgs['documents'] = normalizedArgs['entries'];
-      } else if (normalizedArgs['sections'] is List) {
-        normalizedArgs['documents'] = normalizedArgs['sections'];
-      } else if (normalizedArgs['topics'] is List) {
-        normalizedArgs['documents'] = normalizedArgs['topics'];
-      } else if (normalizedArgs['cards'] is List) {
-        normalizedArgs['documents'] = normalizedArgs['cards'];
-      } else if (normalizedArgs['list'] is List) {
-        normalizedArgs['documents'] = normalizedArgs['list'];
-      } else if (normalizedArgs['title'] != null ||
-          normalizedArgs['content'] != null ||
-          normalizedArgs['body'] != null ||
-          normalizedArgs['text'] != null) {
-        final rawContent = normalizedArgs['content'] ??
-            normalizedArgs['body'] ??
-            normalizedArgs['text'] ??
-            '';
-        var rawTitle = (normalizedArgs['title'] as String? ?? '').trim();
-        if (rawTitle.isEmpty) {
-          final firstLine = (rawContent as String)
-              .split('\n')
-              .firstWhere(
-                (l) => l.trim().isNotEmpty,
-                orElse: () => 'Untitled Note',
-              )
-              .replaceAll(RegExp(r'^[#*\s-]+'), '')
-              .trim();
-          rawTitle = firstLine.isNotEmpty ? firstLine : 'Untitled Note';
-        }
-        normalizedArgs['documents'] = [
-          {
-            'title': rawTitle,
-            'content': (rawContent as String? ?? '').trim(),
-            'kind': normalizedArgs['kind'] ??
-                (name == 'create_notes' ? 'script' : null),
-            if (normalizedArgs['mode'] != null) 'mode': normalizedArgs['mode'],
-            if (normalizedArgs['meta'] != null) 'meta': normalizedArgs['meta'],
-            if (normalizedArgs['links'] != null)
-              'links': normalizedArgs['links'],
+      normalizedArgs['documents'] = normalizedArgs['notes'] ??
+          normalizedArgs['docs'] ??
+          normalizedArgs['items'] ??
+          normalizedArgs['data'] ??
+          normalizedArgs['entries'] ??
+          normalizedArgs['sections'] ??
+          normalizedArgs['topics'] ??
+          normalizedArgs['cards'] ??
+          normalizedArgs['list'];
+      if (normalizedArgs['documents'] == null) {
+        if (normalizedArgs['document'] is Map) {
+          normalizedArgs['documents'] = [
+            Map<String, dynamic>.from(normalizedArgs['document'] as Map)
+          ];
+        } else if (normalizedArgs['title'] != null ||
+            normalizedArgs['content'] != null ||
+            normalizedArgs['body'] != null ||
+            normalizedArgs['text'] != null) {
+          final rawContent = normalizedArgs['content'] ??
+              normalizedArgs['body'] ??
+              normalizedArgs['text'] ??
+              '';
+          var rawTitle = (normalizedArgs['title'] as String? ?? '').trim();
+          if (rawTitle.isEmpty) {
+            final firstLine = (rawContent as String)
+                .split('\n')
+                .firstWhere(
+                  (l) => l.trim().isNotEmpty,
+                  orElse: () => 'Untitled Note',
+                )
+                .replaceAll(RegExp(r'^[#*\s-]+'), '')
+                .trim();
+            rawTitle = firstLine.isNotEmpty ? firstLine : 'Untitled Note';
           }
-        ];
+          normalizedArgs['documents'] = [
+            {
+              'title': rawTitle,
+              'content': (rawContent as String? ?? '').trim(),
+              'kind': normalizedArgs['kind'] ??
+                  (name == 'create_notes' ? 'script' : null),
+              if (normalizedArgs['mode'] != null) 'mode': normalizedArgs['mode'],
+              if (normalizedArgs['meta'] != null) 'meta': normalizedArgs['meta'],
+              if (normalizedArgs['links'] != null)
+                'links': normalizedArgs['links'],
+            }
+          ];
+        }
       }
     } else if (normalizedArgs['documents'] is Map) {
       normalizedArgs['documents'] = [
@@ -2224,6 +2257,34 @@ Future<Map<String, dynamic>> executeAiTool(
   try {
     final field = batchFields[name];
     if (field != null) {
+      var rawItems = normalizedArgs[field];
+      if (rawItems is String) {
+        rawItems = coerceJson(rawItems);
+        normalizedArgs[field] = rawItems;
+      }
+      if (rawItems is Map) {
+        rawItems = [Map<String, dynamic>.from(rawItems)];
+        normalizedArgs[field] = rawItems;
+      }
+      if (rawItems is List) {
+        final coercedList = <Map<String, dynamic>>[];
+        for (final item in rawItems) {
+          final decodedItem = coerceJson(item);
+          if (decodedItem is Map) {
+            coercedList.add(Map<String, dynamic>.from(decodedItem));
+          } else if (decodedItem is List) {
+            for (final sub in decodedItem) {
+              final decodedSub = coerceJson(sub);
+              if (decodedSub is Map) {
+                coercedList.add(Map<String, dynamic>.from(decodedSub));
+              }
+            }
+          }
+        }
+        if (coercedList.isNotEmpty) {
+          normalizedArgs[field] = coercedList;
+        }
+      }
       final items = normalizedArgs[field];
       if (items is! List ||
           items.isEmpty ||
