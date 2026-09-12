@@ -219,6 +219,19 @@ class StudioStore extends ChangeNotifier {
     changed();
   }
 
+  bool deleteProject(String id) {
+    if (projects.length <= 1) return false;
+    final index = projects.indexWhere((p) => p.id == id);
+    if (index == -1) return false;
+    projects.removeAt(index);
+    if (currentId == id) {
+      currentId = projects.isNotEmpty ? projects.first.id : '';
+    }
+    save();
+    notifyListeners();
+    return true;
+  }
+
   void add(CreativeObject o) {
     project.objects.add(o);
     changed();

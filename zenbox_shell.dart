@@ -978,6 +978,46 @@ class _ZenboxShellState extends State<ZenboxShell> {
                                 }
                               case 'ai':
                                 if (mounted) showAiSettings(context, store, ai);
+                              case 'delete_workspace':
+                                if (store.projects.length <= 1) {
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Cannot delete the only workspace.'),
+                                      ),
+                                    );
+                                  }
+                                  break;
+                                }
+                                final p = store.project;
+                                final confirm = await showDialog<bool>(
+                                  context: context,
+                                  builder: (context) => AlertDialog(
+                                    title: Text('Delete “${p.title}”?'),
+                                    content: Text(
+                                      'This will delete “${p.title}” and all its items. This action cannot be undone.',
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(context, false),
+                                        child: const Text('Cancel'),
+                                      ),
+                                      FilledButton(
+                                        style: FilledButton.styleFrom(
+                                          backgroundColor: const Color(0xFFA54141),
+                                        ),
+                                        onPressed: () => Navigator.pop(context, true),
+                                        child: const Text('Delete workspace'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                                if (confirm == true) {
+                                  store.deleteProject(p.id);
+                                  store.selectCourse(null);
+                                  selectedId = null;
+                                  navigate('Home');
+                                }
                               default:
                                 if (v.startsWith('switch:')) {
                                   store.currentId = v.substring(7);
@@ -1019,6 +1059,26 @@ class _ZenboxShellState extends State<ZenboxShell> {
                                 child: Text(p.title),
                               ),
                             ),
+                            if (store.projects.length > 1) ...[
+                              const PopupMenuDivider(),
+                              const PopupMenuItem(
+                                value: 'delete_workspace',
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.delete_outline,
+                                      size: 16,
+                                      color: Color(0xFFA54141),
+                                    ),
+                                    SizedBox(width: 8),
+                                    Text(
+                                      'Delete current workspace…',
+                                      style: TextStyle(color: Color(0xFFA54141)),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                       ],

@@ -420,6 +420,225 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
     saveLayout();
   }
 
+  Future<bool> _showConfirmDeleteDialog(Project p) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete “${p.title}”?'),
+        content: Text(
+          'This will permanently delete “${p.title}” and all ${p.objects.length} item(s) inside it. This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFA54141),
+            ),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete workspace'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return false;
+    final title = p.title;
+    final wasCurrent = p.id == project.id;
+    sequenceTimer?.cancel();
+    final ok = store.deleteProject(p.id);
+    if (ok) {
+      if (wasCurrent) {
+        restoreLayout();
+        setState(() {
+          selectedId = null;
+          activeDocument = null;
+          expandedScratchpadId = null;
+          activePlayingQuiz = null;
+          mode = 'Overview';
+        });
+      } else {
+        setState(() {});
+      }
+      toast('Deleted workspace “$title”');
+    }
+    return ok;
+  }
+
+  Future<void> deleteProjectDialog([Project? target]) async {
+    final p = target ?? project;
+    if (store.projects.length <= 1) {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Cannot delete workspace'),
+          content: const Text(
+            'You cannot delete the only workspace. Create another workspace first before deleting this one.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+    await _showConfirmDeleteDialog(p);
+  }
+
+  Future<void> manageProjectsDialog() async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: Row(
+              children: [
+                Icon(Icons.folder_copy_outlined, size: 20, color: sage),
+                const SizedBox(width: 10),
+                const Text('Manage study workspaces'),
+              ],
+            ),
+            content: SizedBox(
+              width: 500,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Switch between courses, create new workspaces, or delete workspaces you no longer need.',
+                    style: TextStyle(fontSize: 12, color: muted),
+                  ),
+                  const SizedBox(height: 16),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 340),
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: store.projects.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final p = store.projects[index];
+                        final isCurrent = p.id == store.project.id;
+                        return ListTile(
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          leading: Icon(
+                            isCurrent ? Icons.folder_open : Icons.folder,
+                            color: isCurrent ? sage : muted,
+                          ),
+                          title: Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  p.title,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontWeight: isCurrent
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                              if (isCurrent) ...[
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: sage.withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    'Active',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                      color: sage,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                          subtitle: Text(
+                            '${p.objects.length} item(s) · ${p.description.isNotEmpty ? p.description : "No description"}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 11, color: muted),
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (!isCurrent)
+                                TextButton(
+                                  onPressed: () {
+                                    sequenceTimer?.cancel();
+                                    store.select(p);
+                                    restoreLayout();
+                                    Navigator.pop(ctx);
+                                    setState(() {});
+                                  },
+                                  child: const Text('Open'),
+                                ),
+                              IconButton(
+                                tooltip: store.projects.length > 1
+                                    ? 'Delete workspace'
+                                    : 'Cannot delete the only workspace',
+                                icon: Icon(
+                                  Icons.delete_outline,
+                                  size: 18,
+                                  color: store.projects.length > 1
+                                      ? const Color(0xFFA54141)
+                                      : muted.withValues(alpha: 0.4),
+                                ),
+                                onPressed: store.projects.length > 1
+                                    ? () async {
+                                        final deleted =
+                                            await _showConfirmDeleteDialog(p);
+                                        if (deleted) {
+                                          setDialogState(() {});
+                                          setState(() {});
+                                        }
+                                      }
+                                    : null,
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton.icon(
+                onPressed: () async {
+                  Navigator.pop(ctx);
+                  await createProject();
+                },
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('New workspace'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Done'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   Future<void> create(String kind) async {
     final label = switch (kind) {
       'script' => 'topic / section',
@@ -871,6 +1090,10 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
         onObject: open,
         onCapture: quickCapture,
         onNew: createProject,
+        onManage: manageProjectsDialog,
+        onDelete: store.projects.length > 1
+            ? () => deleteProjectDialog(project)
+            : null,
       ),
     );
   }
@@ -1224,6 +1447,10 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
             onSelected: (id) {
               if (id == 'new') {
                 createProject();
+              } else if (id == 'manage') {
+                manageProjectsDialog();
+              } else if (id == 'delete') {
+                deleteProjectDialog(project);
               } else if (id == 'import') {
                 run(importProject);
               } else {
@@ -1235,13 +1462,84 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
             },
             itemBuilder: (_) => [
               ...store.projects.map(
-                (p) => PopupMenuItem(value: p.id, child: Text(p.title)),
+                (p) => PopupMenuItem(
+                  value: p.id,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          p.title,
+                          style: TextStyle(
+                            fontWeight: p.id == project.id
+                                ? FontWeight.bold
+                                : FontWeight.normal,
+                          ),
+                        ),
+                      ),
+                      if (p.id == project.id)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 8),
+                          child: Icon(Icons.check, size: 16, color: sage),
+                        ),
+                    ],
+                  ),
+                ),
               ),
               const PopupMenuDivider(),
-              const PopupMenuItem(value: 'new', child: Text('+ New course')),
+              const PopupMenuItem(
+                value: 'new',
+                child: Row(
+                  children: [
+                    Icon(Icons.add, size: 16),
+                    SizedBox(width: 8),
+                    Text('New course'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'manage',
+                child: Row(
+                  children: [
+                    Icon(Icons.tune, size: 16),
+                    SizedBox(width: 8),
+                    Text('Manage courses…'),
+                  ],
+                ),
+              ),
               const PopupMenuItem(
                 value: 'import',
-                child: Text('Import project…'),
+                child: Row(
+                  children: [
+                    Icon(Icons.file_download_outlined, size: 16),
+                    SizedBox(width: 8),
+                    Text('Import project…'),
+                  ],
+                ),
+              ),
+              const PopupMenuDivider(),
+              PopupMenuItem(
+                value: 'delete',
+                enabled: store.projects.length > 1,
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.delete_outline,
+                      size: 16,
+                      color: store.projects.length > 1
+                          ? const Color(0xFFA54141)
+                          : muted,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Delete current course…',
+                      style: TextStyle(
+                        color: store.projects.length > 1
+                            ? const Color(0xFFA54141)
+                            : muted,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
             child: Row(
@@ -6354,6 +6652,49 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
                         store.changed();
                       },
                     ),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(context);
+                              manageProjectsDialog();
+                            },
+                            icon: const Icon(Icons.tune, size: 15),
+                            label: const Text(
+                              'Manage workspaces',
+                              style: TextStyle(fontSize: 11),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: store.projects.length > 1
+                                ? () {
+                                    Navigator.pop(context);
+                                    deleteProjectDialog(project);
+                                  }
+                                : null,
+                            icon: const Icon(
+                              Icons.delete_outline,
+                              size: 15,
+                              color: Color(0xFFA54141),
+                            ),
+                            label: Text(
+                              'Delete workspace',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: store.projects.length > 1
+                                    ? const Color(0xFFA54141)
+                                    : muted,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 20),
                     const Divider(),
                     const SizedBox(height: 8),
@@ -7519,11 +7860,14 @@ class _CommandPalette extends StatefulWidget {
     required this.onObject,
     required this.onCapture,
     required this.onNew,
+    this.onManage,
+    this.onDelete,
   });
   final Project project;
   final void Function(String) onMode;
   final void Function(CreativeObject) onObject;
   final VoidCallback onCapture, onNew;
+  final VoidCallback? onManage, onDelete;
   @override
   State<_CommandPalette> createState() => _CommandPaletteState();
 }
@@ -7566,6 +7910,24 @@ class _CommandPaletteState extends State<_CommandPalette> {
                       title: const Text('New course'),
                       onTap: () => act(widget.onNew),
                     ),
+                    if (widget.onManage != null)
+                      ListTile(
+                        leading: const Icon(Icons.tune),
+                        title: const Text('Manage courses / workspaces'),
+                        onTap: () => act(widget.onManage!),
+                      ),
+                    if (widget.onDelete != null)
+                      ListTile(
+                        leading: const Icon(
+                          Icons.delete_outline,
+                          color: Color(0xFFA54141),
+                        ),
+                        title: const Text(
+                          'Delete current course…',
+                          style: TextStyle(color: Color(0xFFA54141)),
+                        ),
+                        onTap: () => act(widget.onDelete!),
+                      ),
                     ListTile(
                       leading: const Icon(Icons.edit_note),
                       title: const Text('Quick capture'),
@@ -7575,6 +7937,28 @@ class _CommandPaletteState extends State<_CommandPalette> {
                       ),
                       onTap: () => act(widget.onCapture),
                     ),
+                  ],
+                  if (query.isNotEmpty) ...[
+                    if ('manage courses workspaces'.contains(query) &&
+                        widget.onManage != null)
+                      ListTile(
+                        leading: const Icon(Icons.tune),
+                        title: const Text('Manage courses / workspaces'),
+                        onTap: () => act(widget.onManage!),
+                      ),
+                    if ('delete current course workspace'.contains(query) &&
+                        widget.onDelete != null)
+                      ListTile(
+                        leading: const Icon(
+                          Icons.delete_outline,
+                          color: Color(0xFFA54141),
+                        ),
+                        title: const Text(
+                          'Delete current course…',
+                          style: TextStyle(color: Color(0xFFA54141)),
+                        ),
+                        onTap: () => act(widget.onDelete!),
+                      ),
                   ],
                   for (var i = 0; i < modes.length; i++)
                     if (studyModeLabel(modes[i]).toLowerCase().contains(query))
