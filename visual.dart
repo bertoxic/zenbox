@@ -333,6 +333,8 @@ class _CanvasWorkspaceState extends State<CanvasWorkspace> {
   bool connecting = false;
   Offset? mouseScenePoint;
   String searchQuery = '';
+  bool multiSelectMode = false;
+  Set<String> markedIds = {};
 
   @override
   void dispose() {
@@ -340,10 +342,71 @@ class _CanvasWorkspaceState extends State<CanvasWorkspace> {
     super.dispose();
   }
 
-  List<CreativeObject> get nodes => widget.store.project.of('board').toList();
+  List<String> get mapPages {
+    final configured = (widget.store.project.layout['conceptMaps'] as List?)
+            ?.map((e) => e.toString().trim())
+            .where((e) => e.isNotEmpty)
+            .toList() ??
+        [];
+    final boardMaps = widget.store.project
+        .of('board')
+        .map((o) => (o.meta['conceptMap'] as String?)?.trim() ?? '')
+        .where((name) => name.isNotEmpty)
+        .toSet();
+    final combined = <String>[];
+    for (final name in configured) {
+      if (!combined.contains(name)) combined.add(name);
+    }
+    for (final name in boardMaps) {
+      if (!combined.contains(name)) combined.add(name);
+    }
+    if (combined.isEmpty) combined.add('Main Board');
+    return combined;
+  }
+
+  String get activeMapName {
+    final active = widget.store.project.layout['activeConceptMap'] as String?;
+    final available = mapPages;
+    if (active != null && available.contains(active)) return active;
+    return available.first;
+  }
+
+  void _setActiveMap(String mapName) {
+    setState(() {
+      widget.store.project.layout['activeConceptMap'] = mapName;
+      selected = null;
+      editing = null;
+      connecting = false;
+      markedIds.clear();
+      multiSelectMode = false;
+      widget.store.changed();
+    });
+  }
+
+  bool _nodeMatchesMap(
+    CreativeObject o,
+    String mapName,
+    List<String> allPages,
+  ) {
+    final nodeMap = (o.meta['conceptMap'] as String?)?.trim() ?? '';
+    if (nodeMap.isEmpty) {
+      return mapName == allPages.first;
+    }
+    return nodeMap == mapName;
+  }
+
+  List<CreativeObject> get nodes {
+    final current = activeMapName;
+    final pages = mapPages;
+    return widget.store.project
+        .of('board')
+        .where((o) => _nodeMatchesMap(o, current, pages))
+        .toList();
+  }
 
   void add({CreativeObject? source, Offset? point, String? categoryId}) {
     final defaultCat = categoryId ?? 'concept';
+    final currentMap = activeMapName;
     final o = CreativeObject(
       kind: 'board',
       title: source?.title ?? 'New Concept',
@@ -356,6 +419,7 @@ class _CanvasWorkspaceState extends State<CanvasWorkspace> {
         'y': point?.dy ?? 150.0 + (nodes.length % 5) * 60,
         'color': nodes.length % conceptCategories.length,
         'category': defaultCat,
+        'conceptMap': currentMap,
       },
     );
     widget.store.add(o);
@@ -411,6 +475,350 @@ class _CanvasWorkspaceState extends State<CanvasWorkspace> {
       if (idx != -1) o.meta['color'] = idx;
       widget.store.changed();
     });
+  }
+
+  Future<void> _showNewPageDialog() async {
+    final controller = TextEditingController(
+      text: 'Concept Map ${mapPages.length + 1}',
+    );
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('New Concept Map Page'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Page / Map Name',
+            hintText: 'e.g. Memory Systems, Cellular Respiration...',
+          ),
+          onSubmitted: (val) {
+            if (val.trim().isNotEmpty) Navigator.pop(context, val.trim());
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final val = controller.text.trim();
+              if (val.isNotEmpty) Navigator.pop(context, val);
+            },
+            child: const Text('Create Page'),
+          ),
+        ],
+      ),
+    );
+    if (result != null && result.isNotEmpty) {
+      final pages = List<String>.from(mapPages);
+      if (!pages.contains(result)) {
+        pages.add(result);
+        widget.store.project.layout['conceptMaps'] = pages;
+      }
+      _setActiveMap(result);
+      if (mounted) {
+        TopNotification.show(
+          context,
+          'Created page "$result"',
+          icon: Icons.layers_outlined,
+        );
+      }
+    }
+  }
+
+  Future<void> _showRenamePageDialog() async {
+    final current = activeMapName;
+    final controller = TextEditingController(text: current);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Rename Concept Map Page'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'New Page Name',
+          ),
+          onSubmitted: (val) {
+            if (val.trim().isNotEmpty && val.trim() != current) {
+              Navigator.pop(context, val.trim());
+            }
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final val = controller.text.trim();
+              if (val.isNotEmpty && val != current) {
+                Navigator.pop(context, val);
+              }
+            },
+            child: const Text('Rename'),
+          ),
+        ],
+      ),
+    );
+    if (result != null && result.isNotEmpty && result != current) {
+      final pages = List<String>.from(mapPages);
+      final idx = pages.indexOf(current);
+      if (idx != -1) {
+        pages[idx] = result;
+      } else {
+        pages.add(result);
+      }
+      widget.store.project.layout['conceptMaps'] = pages;
+
+      for (final node in widget.store.project.of('board')) {
+        if (_nodeMatchesMap(node, current, mapPages)) {
+          node.meta['conceptMap'] = result;
+        }
+      }
+      _setActiveMap(result);
+      if (mounted) {
+        TopNotification.show(
+          context,
+          'Renamed to "$result"',
+          icon: Icons.edit_outlined,
+        );
+      }
+    }
+  }
+
+  void _duplicateCurrentPage() {
+    final current = activeMapName;
+    final pages = List<String>.from(mapPages);
+    var newName = '$current (Copy)';
+    var counter = 2;
+    while (pages.contains(newName)) {
+      newName = '$current (Copy $counter)';
+      counter++;
+    }
+    pages.add(newName);
+    widget.store.project.layout['conceptMaps'] = pages;
+
+    final currentNodes = nodes;
+    final idMap = <String, String>{};
+    final duplicated = <CreativeObject>[];
+
+    for (final oldNode in currentNodes) {
+      final newObjId = newId();
+      idMap[oldNode.id] = newObjId;
+      final newObj = CreativeObject(
+        id: newObjId,
+        kind: 'board',
+        title: oldNode.title,
+        body: oldNode.body,
+        links: List<String>.from(oldNode.links),
+        meta: Map<String, dynamic>.from(oldNode.meta),
+      );
+      newObj.meta['conceptMap'] = newName;
+      duplicated.add(newObj);
+    }
+
+    for (final newObj in duplicated) {
+      newObj.links = newObj.links
+          .map((targetId) => idMap[targetId] ?? targetId)
+          .where((targetId) => idMap.containsValue(targetId))
+          .toList();
+      widget.store.project.objects.add(newObj);
+    }
+
+    _setActiveMap(newName);
+    if (mounted) {
+      TopNotification.show(
+        context,
+        'Duplicated "$current" to "$newName"',
+        icon: Icons.copy_outlined,
+      );
+    }
+  }
+
+  Future<void> _deleteCurrentPage() async {
+    final pages = List<String>.from(mapPages);
+    if (pages.length <= 1) {
+      await showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Cannot Delete Page'),
+          content: const Text(
+            'You must have at least one concept map page in your project. You can clear all cards on this page instead.',
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    final current = activeMapName;
+    final count = nodes.length;
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete Page "$current"?'),
+        content: Text(
+          count > 0
+              ? 'This will permanently remove the page and all $count cards on it.'
+              : 'This will remove the page from your concept maps.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFD32F2F),
+            ),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete Page'),
+          ),
+        ],
+      ),
+    );
+    if (yes != true) return;
+
+    final toRemove = List<CreativeObject>.from(nodes);
+    final removedIds = toRemove.map((e) => e.id).toSet();
+    for (final o in toRemove) {
+      widget.store.project.objects.remove(o);
+    }
+    for (final item in widget.store.project.objects) {
+      item.links.removeWhere((id) => removedIds.contains(id));
+    }
+    pages.remove(current);
+    widget.store.project.layout['conceptMaps'] = pages;
+    final nextMap = pages.first;
+    _setActiveMap(nextMap);
+    if (mounted) {
+      TopNotification.show(
+        context,
+        'Deleted page "$current"',
+        icon: Icons.delete_forever_outlined,
+      );
+    }
+  }
+
+  Future<void> _deleteAllCardsOnPage() async {
+    final count = nodes.length;
+    if (count == 0) {
+      if (mounted) {
+        TopNotification.show(
+          context,
+          'This map has no cards to delete.',
+          icon: Icons.info_outline,
+        );
+      }
+      return;
+    }
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete all cards in "$activeMapName"?'),
+        content: Text(
+          'This will permanently delete all $count cards and their connections on this map page.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFD32F2F),
+            ),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete All Cards'),
+          ),
+        ],
+      ),
+    );
+    if (yes != true) return;
+
+    final toRemove = List<CreativeObject>.from(nodes);
+    final deletedIds = toRemove.map((e) => e.id).toSet();
+    for (final o in toRemove) {
+      widget.store.project.objects.remove(o);
+    }
+    for (final item in widget.store.project.objects) {
+      item.links.removeWhere((linkId) => deletedIds.contains(linkId));
+    }
+    setState(() {
+      selected = null;
+      editing = null;
+      connecting = false;
+      markedIds.clear();
+      multiSelectMode = false;
+      widget.store.changed();
+    });
+    if (mounted) {
+      TopNotification.show(
+        context,
+        'Removed all $count cards from "$activeMapName"',
+        icon: Icons.delete_sweep_outlined,
+      );
+    }
+  }
+
+  Future<void> _deleteMarkedCards() async {
+    if (markedIds.isEmpty) return;
+    final count = markedIds.length;
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete $count marked card${count == 1 ? '' : 's'}?'),
+        content: Text(
+          'These $count cards and their connecting links will be removed from "$activeMapName".',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFD32F2F),
+            ),
+            onPressed: () => Navigator.pop(context, true),
+            child: Text('Delete ($count)'),
+          ),
+        ],
+      ),
+    );
+    if (yes != true) return;
+
+    final toDelete = nodes.where((n) => markedIds.contains(n.id)).toList();
+    for (final o in toDelete) {
+      widget.store.project.objects.remove(o);
+    }
+    for (final item in widget.store.project.objects) {
+      item.links.removeWhere((id) => markedIds.contains(id));
+    }
+    setState(() {
+      markedIds.clear();
+      multiSelectMode = false;
+      selected = null;
+      editing = null;
+      connecting = false;
+      widget.store.changed();
+    });
+    if (mounted) {
+      TopNotification.show(
+        context,
+        'Removed $count cards',
+        icon: Icons.delete_outline,
+      );
+    }
   }
 
   void _autoArrange() {
@@ -523,6 +931,8 @@ class _CanvasWorkspaceState extends State<CanvasWorkspace> {
       final dotColor = isDark
           ? settings.themePreset.primary.withValues(alpha: 0.35)
           : settings.themePreset.primary.withValues(alpha: 0.22);
+      final currentMap = activeMapName;
+      final themePrimary = settings.themePreset.primary;
 
       return Column(
         children: [
@@ -532,8 +942,211 @@ class _CanvasWorkspaceState extends State<CanvasWorkspace> {
             subtitle:
                 'Connect ideas across topics · Drag cards to arrange · Double-click canvas to add · Double-click card to edit',
             actions: [
+              // Concept Map Page Switcher & Manager
+              PopupMenuButton<String>(
+                tooltip: 'Switch or manage concept map pages',
+                onSelected: (val) {
+                  if (val == '__new__') {
+                    _showNewPageDialog();
+                  } else if (val == '__rename__') {
+                    _showRenamePageDialog();
+                  } else if (val == '__duplicate__') {
+                    _duplicateCurrentPage();
+                  } else if (val == '__delete_page__') {
+                    _deleteCurrentPage();
+                  } else if (val == '__clear_cards__') {
+                    _deleteAllCardsOnPage();
+                  } else {
+                    _setActiveMap(val);
+                  }
+                },
+                itemBuilder: (context) {
+                  final pages = mapPages;
+                  return [
+                    ...pages.map((p) {
+                      final count = widget.store.project
+                          .of('board')
+                          .where((o) => _nodeMatchesMap(o, p, pages))
+                          .length;
+                      final isCurrent = p == currentMap;
+                      return PopupMenuItem<String>(
+                        value: p,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              isCurrent ? Icons.check_circle : Icons.circle_outlined,
+                              size: 15,
+                              color: isCurrent ? themePrimary : muted,
+                            ),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                p,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: isCurrent
+                                    ? themePrimary.withValues(alpha: 0.15)
+                                    : Colors.black.withValues(alpha: 0.06),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                '$count',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: isCurrent ? themePrimary : muted,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                    const PopupMenuDivider(),
+                    const PopupMenuItem<String>(
+                      value: '__new__',
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.add, size: 16),
+                          SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              'New Map Page...',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const PopupMenuItem<String>(
+                      value: '__rename__',
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.edit_outlined, size: 16),
+                          SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              'Rename Active Page...',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const PopupMenuItem<String>(
+                      value: '__duplicate__',
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.copy_outlined, size: 16),
+                          SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              'Duplicate Active Page',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const PopupMenuItem<String>(
+                      value: '__clear_cards__',
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.cleaning_services_outlined,
+                            size: 16,
+                            color: Color(0xFFA54141),
+                          ),
+                          SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              'Clear All Cards on Page',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFFA54141),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (pages.length > 1)
+                      const PopupMenuItem<String>(
+                        value: '__delete_page__',
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.delete_forever_outlined,
+                              size: 16,
+                              color: Color(0xFFA54141),
+                            ),
+                            SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                'Delete Map Page',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFFA54141),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ];
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: isDark ? const Color(0xFF283141) : const Color(0xFFE8ECE4),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: isDark ? const Color(0xFF384354) : const Color(0xFFCDD5C5),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.layers_outlined, size: 15, color: isDark ? Colors.white70 : ink),
+                      const SizedBox(width: 6),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 120),
+                        child: Text(
+                          currentMap,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: isDark ? Colors.white : ink,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(Icons.arrow_drop_down, size: 15, color: isDark ? Colors.white70 : ink),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
               SizedBox(
-                width: 140,
+                width: 130,
                 height: 30,
                 child: TextField(
                   style: const TextStyle(fontSize: 11),
@@ -551,7 +1164,7 @@ class _CanvasWorkspaceState extends State<CanvasWorkspace> {
                       setState(() => searchQuery = v.trim().toLowerCase()),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               IconButton(
                 tooltip: 'Auto arrange into concept tree',
                 onPressed: _autoArrange,
@@ -580,6 +1193,23 @@ class _CanvasWorkspaceState extends State<CanvasWorkspace> {
                 icon: Icon(Icons.hub_outlined, color: connecting ? gold : muted),
               ),
               IconButton(
+                tooltip: multiSelectMode
+                    ? 'Exit mark mode'
+                    : 'Mark to delete / Multi-select cards',
+                onPressed: () {
+                  setState(() {
+                    multiSelectMode = !multiSelectMode;
+                    if (!multiSelectMode) {
+                      markedIds.clear();
+                    }
+                  });
+                },
+                icon: Icon(
+                  multiSelectMode ? Icons.check_box : Icons.check_box_outlined,
+                  color: multiSelectMode ? const Color(0xFFD32F2F) : null,
+                ),
+              ),
+              IconButton(
                 tooltip: 'Delete selected card',
                 onPressed: selected == null
                     ? null
@@ -589,6 +1219,11 @@ class _CanvasWorkspaceState extends State<CanvasWorkspace> {
                       },
                 icon: const Icon(Icons.delete_outline, color: Color(0xFFA54141)),
               ),
+              IconButton(
+                tooltip: 'Delete all cards on this page',
+                onPressed: nodes.isEmpty ? null : _deleteAllCardsOnPage,
+                icon: const Icon(Icons.delete_sweep_outlined, color: Color(0xFFA54141)),
+              ),
               const SizedBox(width: 6),
               FilledButton.icon(
                 onPressed: () => add(),
@@ -597,6 +1232,82 @@ class _CanvasWorkspaceState extends State<CanvasWorkspace> {
               ),
             ],
           ),
+          if (multiSelectMode)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF382323) : const Color(0xFFFDE8E8),
+                border: Border(
+                  bottom: BorderSide(
+                    color: isDark ? const Color(0xFF6B2B2B) : const Color(0xFFF8B4B4),
+                  ),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.checklist, size: 18, color: Color(0xFFD32F2F)),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${markedIds.length} of ${nodes.length} cards marked to delete',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: isDark ? Colors.white : const Color(0xFF991B1B),
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        if (markedIds.length == nodes.length) {
+                          markedIds.clear();
+                        } else {
+                          markedIds = nodes.map((n) => n.id).toSet();
+                        }
+                      });
+                    },
+                    icon: Icon(
+                      markedIds.length == nodes.length
+                          ? Icons.deselect
+                          : Icons.select_all,
+                      size: 14,
+                    ),
+                    label: Text(
+                      markedIds.length == nodes.length ? 'Deselect all' : 'Select all',
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                  ),
+                  const Spacer(),
+                  FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFFD32F2F),
+                      foregroundColor: Colors.white,
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    ),
+                    onPressed: markedIds.isEmpty ? null : _deleteMarkedCards,
+                    icon: const Icon(Icons.delete_outline, size: 15),
+                    label: Text('Delete Marked (${markedIds.length})'),
+                  ),
+                  const SizedBox(width: 8),
+                  TextButton(
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    onPressed: () => setState(() {
+                      multiSelectMode = false;
+                      markedIds.clear();
+                    }),
+                    child: const Text('Cancel', style: TextStyle(fontSize: 11)),
+                  ),
+                ],
+              ),
+            ),
           if (connecting)
             Container(
               width: double.infinity,
@@ -726,6 +1437,7 @@ class _CanvasWorkspaceState extends State<CanvasWorkspace> {
   ]) {
     final cat = getCategoryFor(o);
     final isSelected = selected == o.id;
+    final isMarked = markedIds.contains(o.id);
     final isMatch =
         searchQuery.isEmpty ||
         o.title.toLowerCase().contains(searchQuery) ||
@@ -743,6 +1455,16 @@ class _CanvasWorkspaceState extends State<CanvasWorkspace> {
         opacity: isMatch ? 1.0 : 0.35,
         child: GestureDetector(
           onTap: () {
+            if (multiSelectMode) {
+              setState(() {
+                if (markedIds.contains(o.id)) {
+                  markedIds.remove(o.id);
+                } else {
+                  markedIds.add(o.id);
+                }
+              });
+              return;
+            }
             if (connecting && selected != null && selected != o.id) {
               _completeConnecting(o.id);
             } else {
@@ -751,13 +1473,14 @@ class _CanvasWorkspaceState extends State<CanvasWorkspace> {
             }
           },
           onDoubleTap: () {
+            if (multiSelectMode) return;
             setState(() {
               selected = o.id;
               editing = o.id;
             });
             widget.select(o);
           },
-          onPanUpdate: editing == o.id
+          onPanUpdate: (editing == o.id || multiSelectMode)
               ? null
               : (details) {
                   final scale = transform.value.getMaxScaleOnAxis();
@@ -781,18 +1504,22 @@ class _CanvasWorkspaceState extends State<CanvasWorkspace> {
                   : cat.bgColor,
               borderRadius: BorderRadius.circular(10),
               border: Border.all(
-                color: isSelected
-                    ? (connecting ? gold : cat.accentColor)
-                    : (isDark ? const Color(0xFF384354) : line),
-                width: isSelected ? 2.5 : 1.2,
+                color: isMarked
+                    ? const Color(0xFFD32F2F)
+                    : isSelected
+                        ? (connecting ? gold : cat.accentColor)
+                        : (isDark ? const Color(0xFF384354) : line),
+                width: isMarked || isSelected ? 2.5 : 1.2,
               ),
               boxShadow: [
                 BoxShadow(
-                  color: isSelected
-                      ? cat.accentColor.withValues(alpha: 0.25)
-                      : Colors.black.withValues(alpha: isDark ? 0.25 : 0.06),
+                  color: isMarked
+                      ? const Color(0xFFD32F2F).withValues(alpha: 0.35)
+                      : isSelected
+                          ? cat.accentColor.withValues(alpha: 0.25)
+                          : Colors.black.withValues(alpha: isDark ? 0.25 : 0.06),
                   offset: const Offset(0, 4),
-                  blurRadius: isSelected ? 14 : 8,
+                  blurRadius: isMarked || isSelected ? 14 : 8,
                 ),
               ],
             ),
@@ -804,7 +1531,9 @@ class _CanvasWorkspaceState extends State<CanvasWorkspace> {
                 Container(
                   padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
                   decoration: BoxDecoration(
-                    color: cat.accentColor.withValues(alpha: isDark ? 0.18 : 0.08),
+                    color: isMarked
+                        ? const Color(0xFFD32F2F).withValues(alpha: isDark ? 0.25 : 0.12)
+                        : cat.accentColor.withValues(alpha: isDark ? 0.18 : 0.08),
                     borderRadius: const BorderRadius.vertical(
                       top: Radius.circular(8),
                     ),
@@ -817,6 +1546,32 @@ class _CanvasWorkspaceState extends State<CanvasWorkspace> {
                   ),
                   child: Row(
                     children: [
+                      if (multiSelectMode) ...[
+                        InkWell(
+                          onTap: () {
+                            setState(() {
+                              if (markedIds.contains(o.id)) {
+                                markedIds.remove(o.id);
+                              } else {
+                                markedIds.add(o.id);
+                              }
+                            });
+                          },
+                          borderRadius: BorderRadius.circular(4),
+                          child: Padding(
+                            padding: const EdgeInsets.only(right: 6),
+                            child: Icon(
+                              isMarked
+                                  ? Icons.check_box
+                                  : Icons.check_box_outline_blank,
+                              size: 18,
+                              color: isMarked
+                                  ? const Color(0xFFD32F2F)
+                                  : (isDark ? Colors.white70 : muted),
+                            ),
+                          ),
+                        ),
+                      ],
                       Flexible(
                         child: PopupMenuButton<String>(
                           tooltip: 'Change category',

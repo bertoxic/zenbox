@@ -2213,52 +2213,68 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
                   Positioned(
                     left: 27,
                     top: 26,
-                    right: MediaQuery.sizeOf(context).width < 760 ? 120 : 340,
+                    right: 27,
                     bottom: 22,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Tag('CURRENT COURSE', color: paper),
-                        const Spacer(),
-                        Text(
-                          project.title,
-                          style: TextStyle(
-                            fontFamily: 'Segoe UI',
-                            fontSize: 31,
-                            height: 1.12,
-                            color: ink,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        Text(
-                          project.description,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 11,
-                            height: 1.6,
-                            color: ink,
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        InkWell(
-                          onTap: () => navigate('Notes'),
-                          child: const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                'Continue studying',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
+                    child: LayoutBuilder(
+                      builder: (context, heroBox) {
+                        return SingleChildScrollView(
+                          physics: const NeverScrollableScrollPhysics(),
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(
+                              maxWidth: (heroBox.maxWidth - (heroBox.maxWidth < 600 ? 40 : 300)).clamp(150.0, 900.0),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Tag('CURRENT COURSE', color: paper),
+                                const SizedBox(height: 8),
+                                Text(
+                                  project.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontFamily: 'Segoe UI',
+                                    fontSize: heroBox.maxWidth < 500 ? 22 : 31,
+                                    height: 1.12,
+                                    color: ink,
+                                  ),
                                 ),
-                              ),
-                              SizedBox(width: 9),
-                              Icon(Icons.arrow_forward, size: 15),
-                            ],
+                                const SizedBox(height: 6),
+                                if (project.description.isNotEmpty)
+                                  Text(
+                                    project.description,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      height: 1.4,
+                                      color: ink,
+                                    ),
+                                  ),
+                                const SizedBox(height: 10),
+                                InkWell(
+                                  onTap: () => navigate('Notes'),
+                                  child: const Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        'Continue studying',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      SizedBox(width: 9),
+                                      Icon(Icons.arrow_forward, size: 15),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
+                        );
+                      },
                     ),
                   ),
                   Positioned(
@@ -2314,11 +2330,13 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
           padding: const EdgeInsets.symmetric(horizontal: 30),
           child: Row(
             children: [
-              const Text(
-                'Continue learning',
-                style: TextStyle(fontFamily: 'Segoe UI', fontSize: 21),
+              const Expanded(
+                child: Text(
+                  'Continue learning',
+                  style: TextStyle(fontFamily: 'Segoe UI', fontSize: 21),
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
-              const Spacer(),
               TextButton(
                 onPressed: () => navigate('Notes'),
                 child: const Text(
@@ -7305,7 +7323,7 @@ class _StudioState extends State<Studio> with WidgetsBindingObserver {
         ? metadataText('source')
         : metadataText('deck').isNotEmpty
         ? metadataText('deck')
-        : 'Flashcard Deck';
+        : (cards.length == 1 ? first.title : 'Flashcard Deck');
     final description = metadataText('deckDescription').isNotEmpty
         ? metadataText('deckDescription')
         : '${cards.length} ${cards.length == 1 ? 'card' : 'cards'} in this deck';

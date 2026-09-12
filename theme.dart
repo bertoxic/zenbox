@@ -379,7 +379,7 @@ class SectionHeading extends StatelessWidget {
           Text(subtitle!, style: TextStyle(color: muted, fontSize: 12, height: 1.5)),
         ],
       ]);
-      if (constraints.maxWidth < 700) {
+      if (constraints.maxWidth < 900) {
         return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           heading,
           if (actions.isNotEmpty) ...[
@@ -389,7 +389,19 @@ class SectionHeading extends StatelessWidget {
           ],
         ]);
       }
-      return Row(children: [Expanded(child: heading), ...actions]);
+      return Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+        Expanded(child: heading),
+        const SizedBox(width: 12),
+        Flexible(
+          child: Wrap(
+            spacing: 6,
+            runSpacing: 8,
+            alignment: WrapAlignment.end,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: actions,
+          ),
+        ),
+      ]);
     }),
   );
 }
