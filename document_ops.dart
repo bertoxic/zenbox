@@ -68,6 +68,12 @@ qd.Delta markdownToDelta(String markdown) {
       continue;
     }
 
+    // Blank line
+    if (trimmed.isEmpty) {
+      delta.insert('\n');
+      continue;
+    }
+
     // Check for Markdown table: header row followed by delimiter row
     if (lineIndex + 1 < lines.length &&
         trimmed.contains('|') &&
@@ -449,10 +455,17 @@ String _formatSpansToMarkdown(List<_DeltaSpan> spans) {
       continue;
     }
 
+    if (text.trim().isEmpty) {
+      buffer.write(text);
+      continue;
+    }
+
     // Extract whitespace to keep markdown markers tight around characters
     final leading = RegExp(r'^\s*').stringMatch(text) ?? '';
     final trailing = RegExp(r'\s*$').stringMatch(text) ?? '';
-    final core = text.substring(leading.length, text.length - trailing.length);
+    final endIndex =
+        (text.length - trailing.length).clamp(leading.length, text.length);
+    final core = text.substring(leading.length, endIndex);
 
     if (core.isEmpty) {
       buffer.write(text);
