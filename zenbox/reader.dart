@@ -5,11 +5,11 @@ import 'package:archive/archive.dart';
 import 'package:flutter/material.dart';
 import 'package:pdfrx/pdfrx.dart';
 import 'package:xml/xml.dart';
-import '../model.dart';
-import '../theme.dart';
-import '../visual.dart';
-import '../zenbox_model.dart';
-import '../zenbox_theme.dart';
+import 'package:zenbox/models/model.dart';
+import 'package:zenbox/theme/theme.dart';
+import 'package:zenbox/widgets/visual.dart';
+import 'package:zenbox/models/zenbox_model.dart';
+import 'package:zenbox/theme/zenbox_theme.dart';
 
 class DocumentBlock {
   const DocumentBlock(

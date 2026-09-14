@@ -1,9 +1,9 @@
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import '../../theme.dart';
-import '../../zenbox_model.dart';
-import '../../zenbox_theme.dart';
+import 'package:zenbox/theme/theme.dart';
+import 'package:zenbox/models/zenbox_model.dart';
+import 'package:zenbox/theme/zenbox_theme.dart';
 
 class DashboardView extends StatefulWidget {
   const DashboardView({

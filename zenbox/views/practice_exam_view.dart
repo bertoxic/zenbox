@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import '../../model.dart';
-import '../../zenbox_model.dart';
-import '../../zenbox_theme.dart';
+import 'package:zenbox/models/model.dart';
+import 'package:zenbox/models/zenbox_model.dart';
+import 'package:zenbox/theme/zenbox_theme.dart';
 
 class PracticeExamView extends StatefulWidget {
   const PracticeExamView({super.key,required this.store});final ZenboxStore store;

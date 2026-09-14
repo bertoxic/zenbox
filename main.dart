@@ -2,13 +2,19 @@ import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
-import 'model.dart';
+import 'package:zenbox/models/model.dart';
 import 'studio.dart';
-import 'theme.dart';
+import 'package:zenbox/theme/theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
+
+  // Restore persisted theme and settings, and enable auto-saving
+  final savedSettings = await loadStudioSettings();
+  studioSettingsNotifier.value = savedSettings;
+  initStudioSettingsAutoSave();
+
   final store = StudioStore();
   try {
     await store.load();

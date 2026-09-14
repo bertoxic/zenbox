@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../../zenbox_model.dart';
-import '../../zenbox_theme.dart';
-import '../../notification_service.dart';
+import 'package:zenbox/models/zenbox_model.dart';
+import 'package:zenbox/theme/zenbox_theme.dart';
+import 'package:zenbox/services/notification_service.dart';
 import 'practice_exam_view.dart';
 
 class ReviewView extends StatefulWidget {
